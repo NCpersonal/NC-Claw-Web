@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
+__version__ = "0.6.15"
 """
-Claw v0.6.14 — Terminal AI Assistant
+Claw v0.6.15 — Terminal AI Assistant
   Multi-Agent · Group Chat · Per-Agent API · Skills · Web Gateway
 Usage: python claw.py
 Zero dependencies — Python 3.8+ stdlib only.
@@ -987,8 +988,23 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if path in ("/", ""): self.send_file(os.path.join(base_dir, "chat.html"), "text/html"); return
         if path == "/chat.css": self.send_file(os.path.join(base_dir, "chat.css"), "text/css"); return
         if path == "/chat.js": self.send_file(os.path.join(base_dir, "chat.js"), "application/javascript"); return
+        if path == "/openclaw/health":
+            self.send_json({
+                "status": "ok",
+                "name": "Claw",
+                "version": __version__,
+                "model": config["model"],
+                "features": ["text", "commands", "multi-agent"]
+            })
+            return
+
+        if path == "/openclaw/models":
+            self.send_json({
+                "models": [{"id": config["model"], "name": config["model"], "active": True}]
+            })
+            return
         if path == "/api/health":
-            self.send_json({"status": "ok", "version": "0.6.14", "model": config["model"],
+            self.send_json({"status": "ok", "version": "0.6.15", "model": config["model"],
                 "agents": list(agents.keys()), "groups": list(groups.keys()),
                 "uptime": time.time() - gateway_start_time,
                 "has_sudo": bool(sudo_password),
@@ -1017,8 +1033,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self.send_json({"messages": [{"role": m["role"], "content": m["content"]}
                 for m in gateway_messages if m["role"] in ("user", "assistant") and not m["content"].startswith("[")]}); return
         if path == "/api/usage": self.send_json(token_usage); return
+        
         if path == "/api":
-            self.send_json({"name": "Claw Gateway", "version": "0.6.14",
+            self.send_json({"name": "Claw Gateway", "version": "0.6.15",
                 "endpoints": {"GET /": "Chat UI", "GET /api/health": "Health", "GET /api/config": "Config",
                     "GET /api/skills": "Skills", "GET /api/agents": "Agents", "GET /api/groups": "Groups",
                     "POST /api/chat": "Chat (stream)", "POST /api/chat/sync": "Chat (sync)",
@@ -1029,6 +1046,83 @@ class GatewayHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         gw_log_verbose("POST", path)
+        if path == "/openclaw/chat":
+            data = self.read_body()
+            user_msg = data.get("message", "") or data.get("content", "") or data.get("text", "")
+            user_msg = user_msg.strip()
+            if not user_msg:
+                self.send_json({"error": "Empty message"}, 400)
+                return
+            if not config.get("api_key"):
+                self.send_json({"error": "No API key"}, 400)
+                return
+
+            gw_log_chat("OPENCLAW", user_msg[:60])
+
+            # Support OpenClaw message format
+            messages = data.get("messages", [])
+            if messages and not user_msg:
+                for m in reversed(messages):
+                    if m.get("role") == "user":
+                        user_msg = m.get("content", "")
+                        break
+
+            if not user_msg:
+                self.send_json({"error": "No message content"}, 400)
+                return
+
+            gateway_messages.append({"role": "user", "content": user_msg})
+            sys_msg = {"role": "system", "content": build_system()}
+            api_msgs = [sys_msg] + gateway_messages[-MAX_HISTORY * 2:]
+
+            t0 = time.time()
+            reply = stream_api(api_msgs, lambda tok: None)
+            elapsed = time.time() - t0
+
+            if not reply:
+                self.send_json({"error": "No response"}, 500)
+                return
+
+            gateway_messages.append({"role": "assistant", "content": reply})
+
+            # Execute commands in reply
+            cmds = parse_commands(reply)
+            cmd_results = []
+            if cmds:
+                for c in cmds:
+                    res = execute_command(c)
+                    cmd_results.append({"type": c["type"], "args": c.get("args", ""), "result": res})
+                gateway_messages.append({"role": "user",
+                    "content": "[Command results]\n" + "\n".join(
+                        "[{}:{}] -> {}".format(r["type"], r["args"], r["result"]) for r in cmd_results)})
+                api_msgs2 = [sys_msg] + gateway_messages[-MAX_HISTORY * 2:]
+                reply2 = stream_api(api_msgs2, lambda tok: None)
+                if reply2:
+                    reply = reply2
+                    gateway_messages.append({"role": "assistant", "content": reply2})
+
+            gw_log_chat("REPLY", "({:.1f}s)".format(elapsed))
+
+            # OpenClaw compatible response
+            response = {
+                "reply": reply,
+                "content": reply,
+                "message": reply,
+                "text": reply,
+                "usage": {
+                    "prompt": token_usage["last_prompt"],
+                    "completion": token_usage["last_completion"]
+                },
+                "time": round(elapsed, 2)
+            }
+            if cmd_results:
+                response["commands"] = cmd_results
+
+            self.send_json(response)
+
+            if len(gateway_messages) > MAX_HISTORY * 2:
+                gateway_messages[:] = gateway_messages[-MAX_HISTORY * 2:]
+            return
         if path == "/api/chat": self.handle_gateway_chat(True); return
         if path == "/api/chat/sync": self.handle_gateway_chat(False); return
         if path == "/api/clear": gateway_messages.clear(); self.send_json({"ok": True}); return
@@ -1485,7 +1579,7 @@ def print_status():
 
     print()
     print("  " + sep)
-    print("  {}{}{} Claw v0.6.14".format(C.B, C.CYN, C.R))
+    print("  {}{}{} Claw v0.6.15".format(C.B, C.CYN, C.R))
     print("  " + sep)
     print()
     print("  {}Model:{}    {}".format(C.DIM, C.R, config["model"]))
@@ -1525,7 +1619,7 @@ def cmd_help():
     L = []
     a = L.append
     a("")
-    a("  {}{}\U0001F43E Claw v0.6.14 — Commands{}".format(C.CYN, B, R))
+    a("  {}{}\U0001F43E Claw v0.6.15 — Commands{}".format(C.CYN, B, R))
     a("")
     a("  {}<text>{}                 Chat with current mode".format(B, R))
     a("  {}/key <key>{}             Set API Key".format(B, R))
