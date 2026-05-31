@@ -1,1 +1,7 @@
 install-rpiplay/
+dist/
+build/
+*.egg-info/
+__pycache__/
+install-rpiplay/
+*.bak
