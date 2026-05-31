@@ -4,43 +4,34 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nc-claw"
-version = "0.6.10"
+version = "0.6.13"
 authors = [
   { name = "NCstudio", email = "ncstidio@1024idc.com" }
 ]
 description = "Multi-Agent AI Terminal Assistant"
-long-description = file = "README.md"
-long-description-content-type = "text/markdown"
 readme = "README.md"
 requires-python = ">=3.8"
-# 在这里填写你的项目第三方依赖
-dependencies = [
-  # 示例：requests>=2.31.0
+license = "MIT"
+keywords = ["ai", "terminal", "multi-agent", "chat", "cli", "gateway"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Communications :: Chat",
 ]
 
-# 额外分类器（PyPI 展示用，可选推荐加上）
-[project.classifiers]
-Programming-Language :: Python :: 3
-Programming-Language :: Python :: 3.8
-Programming-Language :: Python :: 3.9
-Programming-Language :: Python :: 3.10
-Programming-Language :: Python :: 3.11
-Programming-Language :: Python :: 3.12
+[project.urls]
+Homepage = "https://github.com/NCpersonal/NC-Claw-Web"
+Repository = "https://github.com/NCpersonal/NC-Claw-Web"
 
-# 打包包含静态文件
-[tool.setuptools.package-data]
-nc_claw = ["*.html", "*.css", "*.js"]
-
-# 命令行入口：claw 指令指向 main 函数
 [project.scripts]
 claw = "nc_claw.claw:main"
 
-# ---------- 下面是适配 GitHub Actions 里 flake8 / pytest 的配置（可选） ----------
-[tool.flake8]
-max-line-length = 127
-max-complexity = 10
-extend-ignore = []
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = "test_*.py"
+[tool.setuptools.package-data]
+nc_claw = ["*.html", "*.css", "*.js"]
