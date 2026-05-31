@@ -1,0 +1,46 @@
+# 🐾 NC Claw — Local Multi-Agent AI Terminal Assistant
+
+A lightweight, offline-first, multi-role AI assistant built for **Linux ARM64 terminals** (like CM5) — no cloud lock-in, no telemetry, zero dependencies beyond Python 3.8+.
+
+> ✨ Run it. Talk to it. Command it. All inside your terminal — or via web UI.
+
+---
+
+## 🔑 Core Principles
+
+- **Local-first**: All logic, config (`~/.claw_config.json`), history (`~/.claw_history`), and agents run on your machine.  
+- **Multi-Agent Native**: Built-in roles (`@coder`, `@artist`, `@chat`, `@lawyer`) collaborate in group chat mode — each with dedicated skills and persona.  
+- **Terminal-Native Commands**: Execute shell, read/write files, inspect system, or run Python — all via clean `//` syntax:  
+  
+  //exec ls -la
+  //read ~/Desktop/notes.txt
+  //tree /home/ncstudio/Desktop --depth 2
+  //time
+  //ip
+  
+- **CM5 Optimized**: Tested on Raspberry Pi OS (aarch64); low memory footprint, no GPU required.
+
+---
+
+## 🚀 Quick Start
+
+1. **Clone & enter project**  
+   
+   cd ~/Desktop && git clone https://github.com/NCstudio/nc-claw.git && cd nc-claw
+   
+2. **Launch Claw**  
+   
+   python3 nc_claw/claw.py
+   
+3. **Open Web UI**  
+   → Visit [`http://localhost:8000`](http://localhost:8000) in your browser  
+   *(Terminal stays active as real-time log dashboard)*
+
+4. **Try your first command**  
+   In the web chat or terminal input:  
+   
+   @all Hello! What can you do?
+   
+✅ Done. You’re now running a full local AI assistant — no sign-up, no API key needed.
+
+---

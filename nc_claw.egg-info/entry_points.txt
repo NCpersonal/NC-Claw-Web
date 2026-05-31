@@ -1,0 +1,2 @@
+[console_scripts]
+claw = nc_claw.claw:main

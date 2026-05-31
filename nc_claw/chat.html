@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claw Chat — Web Client</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐾</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="chat.css">
+</head>
+<body>
+
+<div class="app">
+  <!-- ━━━ Sidebar ━━━ -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <span class="logo">🐾</span>
+      <span class="title">Claw</span>
+      <span class="ver">v0.6.1</span>
+    </div>
+
+    <div class="sidebar-actions">
+      <button class="add-btn" title="Create a new agent" onclick="openAgentModal()">+ Agent</button>
+      <button class="add-btn" title="Create a new group" onclick="openGroupModal()">+ Group</button>
+    </div>
+
+    <div class="sidebar-list" id="sidebarList">
+      <div class="chat-item active" data-mode="default" data-target="" onclick="switchChat(this)">
+        <span class="icon">💬</span><span class="name">Claw (Default)</span>
+      </div>
+    </div>
+
+    <div class="sidebar-bottom">
+      <button class="sidebar-btn" title="Refresh agents and groups" onclick="refreshSidebar()">Refresh</button>
+      <button class="sidebar-btn" title="Open gateway settings" onclick="openSettings()">Settings</button>
+    </div>
+  </div>
+
+  <!-- ━━━ Main Area ━━━ -->
+  <div class="main-area">
+    <!-- Topbar -->
+    <div class="topbar">
+      <div class="topbar-left">
+        <span class="topbar-name" id="chatTitle">🐾 Claw (Default)</span>
+        <span class="topbar-meta" id="chatMeta">Default mode · Global API</span>
+      </div>
+      <div class="topbar-right">
+        <span class="status-dot" id="statusDot" aria-label="Connection status"></span>
+        <span class="status-text" id="statusText">checking...</span>
+        <button class="topbar-btn" title="Toggle console panel" onclick="toggleConsole()" id="consoleToggleBtn">Console</button>
+        <button class="topbar-btn" title="Clear current conversation" onclick="clearChat()">Clear</button>
+      </div>
+    </div>
+
+    <!-- Error -->
+    <div class="error-banner" id="errorBanner" role="alert">
+      <span id="errorText"></span>
+    </div>
+
+    <!-- Messages -->
+    <div class="messages" id="messages" role="log" aria-label="Chat messages"></div>
+
+    <!-- Input -->
+    <div class="input-area">
+      <div class="input-wrap">
+        <textarea id="userInput" rows="1" placeholder="和 Claw 聊天..." aria-label="Chat message" autofocus></textarea>
+        <button class="send-btn" id="sendBtn" title="Send message" aria-label="Send message" onclick="sendMessage()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Console Panel -->
+    <div class="console-panel" id="consolePanel">
+      <div class="console-tabs">
+        <button class="console-tab active" onclick="switchConsoleTab('exec', this)">Console</button>
+        <button class="console-tab" onclick="switchConsoleTab('log', this)">Log</button>
+      </div>
+      <div class="console-body">
+        <div class="console-view active" id="consoleViewExec">
+          <div class="console-output" id="consoleOutput"></div>
+          <div class="console-input">
+            <input type="text" id="consoleInput" placeholder="输入命令... 如 ls -la, git status, python3 script.py" aria-label="Console command input">
+            <button class="run-btn" onclick="runConsoleCommand()" aria-label="Run command">Run</button>
+          </div>
+        </div>
+        <div class="console-view" id="consoleViewLog">
+          <div class="console-output" id="logOutput"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ━━━ Settings Modal ━━━ -->
+<div class="modal-overlay" id="settingsModal" role="dialog" aria-modal="true" aria-label="Settings">
+  <div class="modal">
+    <h2>⚙ Gateway Settings</h2>
+    <label for="cfgUrl">Gateway URL</label>
+    <input id="cfgUrl" type="url" placeholder="http://localhost:8765">
+    <div class="help">Claw Gateway 地址</div>
+    <label for="cfgMode">Connection Mode</label>
+    <select id="cfgMode">
+      <option value="stream">Streaming (NDJSON) — 实时逐字输出</option>
+      <option value="sync">Sync — 等待完整回复</option>
+    </select>
+    <label for="cfgTimeout">Timeout (seconds)</label>
+    <input id="cfgTimeout" type="number" value="120" min="10" max="300" placeholder="120">
+    <label for="cfgSudo">Sudo Password</label>
+<div class="sudo-row">
+  <input id="cfgSudo" type="password" class="form-input" placeholder="Enter sudo password">
+  <button class="modal-btn primary" onclick="setSudoPassword()">Set</button>
+  <button class="modal-btn secondary" onclick="clearSudoPassword()">Clear</button>
+</div>
+
+    <div class="help">In-memory only. Lost on restart.</div>
+    <div class="modal-btns">
+      <button class="modal-btn secondary" onclick="closeSettings()">Cancel</button>
+      <button class="modal-btn primary" onclick="saveSettings()">Save &amp; Connect</button>
+    </div>
+  </div>
+</div>
+
+<!-- ━━━ Agent Modal ━━━ -->
+<div class="modal-overlay" id="agentModal" role="dialog" aria-modal="true" aria-label="Agent configuration">
+  <div class="modal">
+    <h2 id="agentModalTitle">🐾 Create Agent</h2>
+    <label for="agentId">Agent ID</label>
+    <input id="agentId" type="text" placeholder="如: gpt, deep, writer" pattern="[a-zA-Z][a-zA-Z0-9_]*">
+    <div class="help">小写字母开头，只允许字母数字下划线</div>
+    <label for="agentDisplayName">Display Name</label>
+    <input id="agentDisplayName" type="text" placeholder="如: GPT-4o, DeepSeek">
+    <label for="agentRole">Role / System Prompt</label>
+    <textarea id="agentRole" placeholder="这个 Agent 的角色设定..."></textarea>
+    <div class="section-label">API Configuration</div>
+    <div class="help">留空则使用全局配置</div>
+    <label for="agentApiKey">API Key</label>
+    <input id="agentApiKey" type="password" placeholder="留空使用全局 Key" autocomplete="off">
+    <label for="agentApiBase">API Base URL</label>
+    <input id="agentApiBase" type="text" placeholder="如: https://api.deepseek.com/v1">
+    <label for="agentModel">Model</label>
+    <input id="agentModel" type="text" placeholder="如: gpt-4o, deepseek-chat">
+    <div class="modal-btns">
+      <button class="modal-btn secondary" onclick="closeAgentModal()">Cancel</button>
+      <button class="modal-btn primary" id="agentModalSaveBtn" onclick="saveAgent()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- ━━━ Group Modal ━━━ -->
+<div class="modal-overlay" id="groupModal" role="dialog" aria-modal="true" aria-label="Group configuration">
+  <div class="modal">
+    <h2 id="groupModalTitle">👥 Create Group</h2>
+    <label for="groupId">Group Name</label>
+    <input id="groupId" type="text" placeholder="如: team, research">
+    <label for="groupDesc">Description</label>
+    <input id="groupDesc" type="text" placeholder="群聊描述 (可选)">
+    <div class="section-label">Select Members</div>
+    <div id="groupMembersList"></div>
+    <div class="modal-btns">
+      <button class="modal-btn secondary" onclick="closeGroupModal()">Cancel</button>
+      <button class="modal-btn primary" id="groupModalSaveBtn" onclick="saveGroup()">Create</button>
+    </div>
+  </div>
+</div>
+
+<script src="chat.js"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+README.md
+pyproject.toml
+nc_claw/__init__.py
+nc_claw/chat.css
+nc_claw/chat.html
+nc_claw/chat.js
+nc_claw/claw.py
+nc_claw.egg-info/PKG-INFO
+nc_claw.egg-info/SOURCES.txt
+nc_claw.egg-info/dependency_links.txt
+nc_claw.egg-info/entry_points.txt
+nc_claw.egg-info/top_level.txt
