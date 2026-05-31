@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Claw v0.6.13 — Terminal AI Assistant
+Claw v0.6.14 — Terminal AI Assistant
   Multi-Agent · Group Chat · Per-Agent API · Skills · Web Gateway
 Usage: python claw.py
 Zero dependencies — Python 3.8+ stdlib only.
@@ -988,7 +988,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if path == "/chat.css": self.send_file(os.path.join(base_dir, "chat.css"), "text/css"); return
         if path == "/chat.js": self.send_file(os.path.join(base_dir, "chat.js"), "application/javascript"); return
         if path == "/api/health":
-            self.send_json({"status": "ok", "version": "0.6.13", "model": config["model"],
+            self.send_json({"status": "ok", "version": "0.6.14", "model": config["model"],
                 "agents": list(agents.keys()), "groups": list(groups.keys()),
                 "uptime": time.time() - gateway_start_time,
                 "has_sudo": bool(sudo_password),
@@ -1018,7 +1018,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 for m in gateway_messages if m["role"] in ("user", "assistant") and not m["content"].startswith("[")]}); return
         if path == "/api/usage": self.send_json(token_usage); return
         if path == "/api":
-            self.send_json({"name": "Claw Gateway", "version": "0.6.13",
+            self.send_json({"name": "Claw Gateway", "version": "0.6.14",
                 "endpoints": {"GET /": "Chat UI", "GET /api/health": "Health", "GET /api/config": "Config",
                     "GET /api/skills": "Skills", "GET /api/agents": "Agents", "GET /api/groups": "Groups",
                     "POST /api/chat": "Chat (stream)", "POST /api/chat/sync": "Chat (sync)",
@@ -1485,7 +1485,7 @@ def print_status():
 
     print()
     print("  " + sep)
-    print("  {}{}{} Claw v0.6.13".format(C.B, C.CYN, C.R))
+    print("  {}{}{} Claw v0.6.14".format(C.B, C.CYN, C.R))
     print("  " + sep)
     print()
     print("  {}Model:{}    {}".format(C.DIM, C.R, config["model"]))
@@ -1525,7 +1525,7 @@ def cmd_help():
     L = []
     a = L.append
     a("")
-    a("  {}{}\U0001F43E Claw v0.6.13 — Commands{}".format(C.CYN, B, R))
+    a("  {}{}\U0001F43E Claw v0.6.14 — Commands{}".format(C.CYN, B, R))
     a("")
     a("  {}<text>{}                 Chat with current mode".format(B, R))
     a("  {}/key <key>{}             Set API Key".format(B, R))
