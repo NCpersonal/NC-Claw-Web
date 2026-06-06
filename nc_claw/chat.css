@@ -724,3 +724,111 @@ html, body {
 
 .tool-status.executed { color: #4ade80; }
 .tool-status.skipped { color: #f87171; }
+/* ── Danger Levels ── */
+.tool-item.level-danger {
+    border-left: 3px solid #ef4444;
+    background: rgba(239, 68, 68, 0.04);
+}
+
+.tool-item.level-warn {
+    border-left: 3px solid #f59e0b;
+    background: rgba(245, 158, 11, 0.04);
+}
+
+.tool-item.level-safe {
+    border-left: 3px solid transparent;
+}
+
+.tool-level-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-left: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.tool-level-badge.badge-danger {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+.tool-level-badge.badge-warn {
+    background: rgba(245, 158, 11, 0.2);
+    color: #f59e0b;
+}
+
+.tool-level-reason {
+    font-size: 11px;
+    color: #6b6b6b;
+    margin-left: 4px;
+}
+
+/* ── Per-item confirm ── */
+.tool-item-confirm {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.tool-item-confirm .item-btn {
+    padding: 3px 12px;
+    border: none;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: var(--font-sans);
+}
+
+.tool-item-confirm .item-btn.run-danger {
+    background: #ef4444;
+    color: #fff;
+}
+
+.tool-item-confirm .item-btn.run-danger:hover {
+    opacity: 0.85;
+}
+
+.tool-item-confirm .item-btn.run-warn {
+    background: #f59e0b;
+    color: #000;
+}
+
+.tool-item-confirm .item-btn.run-warn:hover {
+    opacity: 0.85;
+}
+
+.tool-item-confirm .item-btn.run-safe {
+    background: #4ade80;
+    color: #000;
+}
+
+.tool-item-confirm .item-btn.skip {
+    background: #333;
+    color: #999;
+}
+
+.tool-item-confirm .item-btn.skip:hover {
+    background: #444;
+    color: #ccc;
+}
+
+.tool-item-confirm .item-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.tool-item-status {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    margin-top: 4px;
+}
+
+.tool-item-status.ran { color: #4ade80; }
+.tool-item-status.blocked { color: #ef4444; }
+.tool-item-status.skipped { color: #6b6b6b; }

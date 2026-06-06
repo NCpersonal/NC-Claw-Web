@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-__version__ = "0.8.3"
+__version__ = "0.8.4"
 """
-Claw v0.8.3 — Terminal AI Assistant
+Claw v0.8.4 — Terminal AI Assistant
   Multi-Agent · Group Chat · Per-Agent API · Skills · Web Gateway
 Usage: python claw.py
 Zero dependencies — Python 3.8+ stdlib only.
@@ -627,6 +627,63 @@ DANGER = [
 
 def is_dangerous(cmd):
     return any(re.search(p, cmd, re.I) for p in DANGER)
+def classify_command(cmd):
+    """Classify command danger level: 'danger', 'warn', 'safe'."""
+    t = cmd.get("type", "")
+    args = cmd.get("args", "")
+
+    # Always dangerous
+    if t == "exec":
+        danger_patterns = [
+            (r'\brm\s+(-[a-zA-Z]*f|--force)', "rm -f (force delete)"),
+            (r'\brm\s+(-[a-zA-Z]*r|--recursive)', "rm -r (recursive delete)"),
+            (r'\brm\s+-rf\b', "rm -rf (force recursive delete)"),
+            (r'\bmkfs\b', "mkfs (format disk)"),
+            (r'\bdd\s+if=', "dd (raw disk write)"),
+            (r'\bshutdown\b', "shutdown"),
+            (r'\breboot\b', "reboot"),
+            (r'\bhalt\b', "halt"),
+            (r'\bpoweroff\b', "poweroff"),
+            (r'\bkill\s+(-9\s+)?1\b', "kill PID 1"),
+            (r'\biptables\s+-F\b', "iptables flush"),
+            (r'\bufw\s+disable\b', "disable firewall"),
+            (r'\bchmod\s+777\s+/', "chmod 777 on root"),
+            (r'\bchown\s+.*\s+/', "chown on root"),
+            (r'\bsystemctl\s+(stop|disable)\s+(network|ssh)', "disable network/ssh"),
+            (r'\bshred\b', "shred (secure erase)"),
+            (r'\bcrontab\s+-r\b', "crontab remove all"),
+        ]
+        for pattern, label in danger_patterns:
+            if re.search(pattern, args, re.I):
+                return "danger", label
+
+        # Warn level
+        warn_patterns = [
+            (r'\brm\s+', "rm (delete)"),
+            (r'\bchmod\b', "chmod (change permissions)"),
+            (r'\bchown\b', "chown (change ownership)"),
+            (r'\bsudo\b', "sudo (elevated privileges)"),
+            (r'\bcurl\b.*\|\s*(bash|sh|python)', "curl pipe to shell"),
+            (r'\bwget\b.*\|\s*(bash|sh|python)', "wget pipe to shell"),
+            (r'\bsystemctl\s+', "systemctl (service control)"),
+            (r'\bapt\s+(remove|purge|install)', "apt (package management)"),
+            (r'\bmodprobe\b', "modprobe (kernel module)"),
+            (r'\bkill\b', "kill (terminate process)"),
+            (r'\bpkill\b', "pkill (terminate processes)"),
+        ]
+        for pattern, label in warn_patterns:
+            if re.search(pattern, args, re.I):
+                return "warn", label
+
+    if t == "delete":
+        return "danger", "file delete"
+
+    if t == "write":
+        path = args
+        if path.startswith(("/etc", "/boot", "/usr", "/var", "/sys")):
+            return "danger", "write to system path"
+
+    return "safe", ""
 
 
 def _strip_artifacts(text):
@@ -1193,7 +1250,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             })
             return
         if path == "/api/health":
-            self.send_json({"status": "ok", "version": "0.8.3", "model": config["model"],
+            self.send_json({"status": "ok", "version": "0.8.4", "model": config["model"],
                 "agents": list(agents.keys()), "groups": list(groups.keys()),
                 "uptime": time.time() - gateway_start_time,
                 "has_sudo": bool(sudo_password),
@@ -1224,7 +1281,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if path == "/api/usage": self.send_json(token_usage); return
         
         if path == "/api":
-            self.send_json({"name": "Claw Gateway", "version": "0.8.3",
+            self.send_json({"name": "Claw Gateway", "version": "0.8.4",
                 "endpoints": {"GET /": "Chat UI", "GET /api/health": "Health", "GET /api/config": "Config",
                     "GET /api/skills": "Skills", "GET /api/agents": "Agents", "GET /api/groups": "Groups",
                     "POST /api/chat": "Chat (stream)", "POST /api/chat/sync": "Chat (sync)",
@@ -1422,6 +1479,20 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return
         self.send_json({"error": "Not found"}, 404)
 
+        if path == "/api/exec-batch":
+            data = self.read_body()
+            commands = data.get("commands", [])
+            if not commands:
+                self.send_json({"error": "No commands"}, 400); return
+            results = []
+            for c in commands:
+                gw_log_info("BATCH", "{} {}".format(c.get("type", ""), c.get("args", "")[:40]))
+                res = execute_command(c)
+                results.append({"type": c.get("type", ""), "args": c.get("args", ""), "result": res})
+            self.send_json({"results": results})
+            return
+
+
     def handle_gateway_chat(self, streaming=True):
         data = self.read_body()
         user_msg = data.get("message", "").strip()
@@ -1459,10 +1530,16 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if not cmds:
             return None
         if streaming:
-            self.send_event({"type": "commands", "commands": [
-                {"type": c["type"], "args": c.get("args", "")} for c in cmds],
-                "need_confirm": confirm})
-        # If confirm mode, don't execute — let frontend handle it
+            cmd_events = []
+            for c in cmds:
+                level, reason = classify_command(c)
+                cmd_events.append({
+                    "type": c["type"],
+                    "args": c.get("args", ""),
+                    "level": level,
+                    "reason": reason
+                })
+            self.send_event({"type": "commands", "commands": cmd_events, "need_confirm": confirm})
         if confirm:
             return None
         results = []
@@ -1483,6 +1560,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             history.append({"role": "assistant", "content": reply2})
             return reply2
         return None
+
 
 
     def _gw_default_chat(self, user_msg, streaming, confirm=False):  # ← 加 confirm=False
@@ -1775,7 +1853,7 @@ def print_status():
 
     print()
     print("  " + sep)
-    print("  {}{}{} Claw v0.8.3".format(C.B, C.CYN, C.R))
+    print("  {}{}{} Claw v0.8.4".format(C.B, C.CYN, C.R))
     print("  " + sep)
     print()
     print("  {}Model:{}    {}".format(C.DIM, C.R, config["model"]))
@@ -1815,7 +1893,7 @@ def cmd_help():
     L = []
     a = L.append
     a("")
-    a("  {}{}\U0001F43E Claw v0.8.3 — Commands{}".format(C.CYN, B, R))
+    a("  {}{}\U0001F43E Claw v0.8.4 — Commands{}".format(C.CYN, B, R))
     a("")
     a("  {}<text>{}                 Chat with current mode".format(B, R))
     a("  {}/key <key>{}             Set API Key".format(B, R))

@@ -350,26 +350,30 @@ function streamChat(body) {
                                 toolCount = 0;
                                 for (var j = 0; j < cmds.length; j++) {
                                     toolCount++;
-                                    var item = document.createElement('div');
-                                    item.className = 'tool-item';
-                                    item.innerHTML =
-                                        '<div class="tool-cmd">' +
-                                            '<span class="tool-cmd-type">$ ' + escapeHtml(cmds[j].type) + '</span>' +
-                                            '<span class="tool-cmd-args">' + escapeHtml(cmds[j].args) + '</span>' +
-                                        '</div>';
-                                    item.setAttribute('data-index', j);
+                                    var item = createToolItem(cmds[j], j);
                                     currentToolBody.appendChild(item);
                                 }
                                 updateToolCount(currentToolBubble, toolCount);
-
-                                // Show confirm bar if needed
                                 if (needConfirm) {
-                                    showConfirmBar(currentToolBubble, pendingCommands);
+                                    showConfirmBar(currentToolBubble, cmds);
                                 }
-
                                 scrollToBottom();
                             }
                         }
+
+                        if (evt.type === 'result') {
+                            var idx = evt.index;
+                            var content = evt.content || '';
+                            if (currentToolBody) {
+                                var items = currentToolBody.querySelectorAll('.tool-item');
+                                var targetItem = items[idx] || items[items.length - 1];
+                                if (targetItem) {
+                                    appendToolResult(targetItem, content);
+                                }
+                            }
+                            scrollToBottom();
+                        }
+
 
                         if (evt.type === 'result') {
                             if (currentToolBody) {
@@ -451,6 +455,91 @@ function toggleToolBody(header) {
     var body = header.nextElementSibling;
     body.classList.toggle('collapsed');
     header.classList.toggle('collapsed');
+}
+
+
+function createToolItem(cmd, index) {
+    var item = document.createElement('div');
+    item.className = 'tool-item' + (cmd.level !== 'safe' ? ' level-' + cmd.level : '');
+    item.setAttribute('data-index', index);
+    item.setAttribute('data-type', cmd.type);
+    item.setAttribute('data-args', cmd.args);
+    item.setAttribute('data-level', cmd.level || 'safe');
+
+    var badgeHtml = '';
+    if (cmd.level === 'danger') {
+        badgeHtml = '<span class="tool-level-badge badge-danger">DANGER</span>' +
+                    '<span class="tool-level-reason">' + escapeHtml(cmd.reason || '') + '</span>';
+    } else if (cmd.level === 'warn') {
+        badgeHtml = '<span class="tool-level-badge badge-warn">WARN</span>' +
+                    '<span class="tool-level-reason">' + escapeHtml(cmd.reason || '') + '</span>';
+    }
+
+    item.innerHTML =
+        '<div class="tool-cmd">' +
+            '<span class="tool-cmd-type">$ ' + escapeHtml(cmd.type) + '</span>' +
+            '<span class="tool-cmd-args">' + escapeHtml(cmd.args) + '</span>' +
+            badgeHtml +
+        '</div>';
+
+    if (cmd.level === 'danger' || cmd.level === 'warn') {
+        var confirmDiv = document.createElement('div');
+        confirmDiv.className = 'tool-item-confirm';
+        confirmDiv.innerHTML =
+            '<button class="item-btn run-' + cmd.level + '" onclick="runSingleCommand(this, ' + index + ')" ' +
+            'title="Run this command" aria-label="Run this command">Run</button>' +
+            '<button class="item-btn skip" onclick="skipSingleCommand(this)" ' +
+            'title="Skip this command" aria-label="Skip this command">Skip</button>';
+        item.appendChild(confirmDiv);
+    }
+
+    return item;
+}
+
+function runSingleCommand(btn, index) {
+    var item = btn.closest('.tool-item');
+    var args = item.getAttribute('data-args');
+
+    var btns = item.querySelectorAll('.item-btn');
+    btns.forEach(function(b) { b.disabled = true; });
+    btn.textContent = 'Running...';
+
+    fetch(API_BASE + '/api/exec', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: args })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        var confirmDiv = item.querySelector('.tool-item-confirm');
+        if (confirmDiv) confirmDiv.remove();
+        appendToolResult(item, d.result || '[No output]');
+        var status = document.createElement('div');
+        status.className = 'tool-item-status ran';
+        status.textContent = 'Executed at ' + timeNow();
+        item.appendChild(status);
+        scrollToBottom();
+    })
+    .catch(function(e) {
+        var confirmDiv = item.querySelector('.tool-item-confirm');
+        if (confirmDiv) confirmDiv.remove();
+        var status = document.createElement('div');
+        status.className = 'tool-item-status blocked';
+        status.textContent = 'Failed: ' + e.message;
+        item.appendChild(status);
+        scrollToBottom();
+    });
+}
+
+function skipSingleCommand(btn) {
+    var item = btn.closest('.tool-item');
+    var confirmDiv = item.querySelector('.tool-item-confirm');
+    if (confirmDiv) confirmDiv.remove();
+    var status = document.createElement('div');
+    status.className = 'tool-item-status skipped';
+    status.textContent = 'Skipped by user';
+    item.appendChild(status);
+    scrollToBottom();
 }
 
 function appendToolResult(targetItem, content) {
