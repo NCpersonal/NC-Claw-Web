@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-__version__ = "0.7.2"
+__version__ = "0.7.3"
 """
-Claw v0.7.2 — Terminal AI Assistant
+Claw v0.7.3 — Terminal AI Assistant
   Multi-Agent · Group Chat · Per-Agent API · Skills · Web Gateway
 Usage: python claw.py
 Zero dependencies — Python 3.8+ stdlib only.
@@ -229,19 +229,20 @@ def build_system():
     base = (
         "You are Claw, a local AI assistant. Execute commands to help the user.\n"
         "\n## Commands (embed naturally in your reply)\n" + cmd_list +
-        "\n## Command Format Rules (MUST follow)\n"
-        "- Single-line commands: //exec ls -la\n"
-        "- Multi-line commands (write, python): start with //keyword on one line,\n"
-        "  put content on following lines, end with //end on its own line\n"
+        "\n## CRITICAL: Command Format Rules\n"
+        "- EVERY command MUST start with // on its own line. No exceptions.\n"
+        "- WRONG:  dpkg -l | grep foo        (missing // — will NOT run)\n"
+        "- RIGHT:  //exec dpkg -l | grep foo  (has // — will run)\n"
+        "- WRONG:  ls /home                   (missing // — will NOT run)\n"
+        "- RIGHT:  //exec ls /home            (has // — will run)\n"
+        "- Single-line: //exec ls -la\n"
+        "- Multi-line (write, python): start with //keyword, content on next lines, end with //end\n"
         "- Example:\n"
         "  //write /tmp/test.py\n"
         "  print('hello')\n"
         "  //end\n"
-        "- Each command MUST be on its OWN line, separated from prose by a blank line\n"
         "- NEVER wrap commands in backticks or code fences\n"
-        "- NEVER add trailing punctuation to commands\n"
         "- Pipes (|) only work with //exec, NOT with //read\n"
-        "- Always use //exec for shell commands (ls, cat, grep, etc.), NOT //ls, //cat\n"
         "- //python does NOT support -c flag, write code directly after //python\n"
         "\n## Rules\n"
         "- Use commands when helpful, naturally within text\n"
@@ -1116,7 +1117,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             })
             return
         if path == "/api/health":
-            self.send_json({"status": "ok", "version": "0.7.2", "model": config["model"],
+            self.send_json({"status": "ok", "version": "0.7.3", "model": config["model"],
                 "agents": list(agents.keys()), "groups": list(groups.keys()),
                 "uptime": time.time() - gateway_start_time,
                 "has_sudo": bool(sudo_password),
@@ -1147,7 +1148,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if path == "/api/usage": self.send_json(token_usage); return
         
         if path == "/api":
-            self.send_json({"name": "Claw Gateway", "version": "0.7.2",
+            self.send_json({"name": "Claw Gateway", "version": "0.7.3",
                 "endpoints": {"GET /": "Chat UI", "GET /api/health": "Health", "GET /api/config": "Config",
                     "GET /api/skills": "Skills", "GET /api/agents": "Agents", "GET /api/groups": "Groups",
                     "POST /api/chat": "Chat (stream)", "POST /api/chat/sync": "Chat (sync)",
@@ -1691,7 +1692,7 @@ def print_status():
 
     print()
     print("  " + sep)
-    print("  {}{}{} Claw v0.7.2".format(C.B, C.CYN, C.R))
+    print("  {}{}{} Claw v0.7.3".format(C.B, C.CYN, C.R))
     print("  " + sep)
     print()
     print("  {}Model:{}    {}".format(C.DIM, C.R, config["model"]))
@@ -1731,7 +1732,7 @@ def cmd_help():
     L = []
     a = L.append
     a("")
-    a("  {}{}\U0001F43E Claw v0.7.2 — Commands{}".format(C.CYN, B, R))
+    a("  {}{}\U0001F43E Claw v0.7.3 — Commands{}".format(C.CYN, B, R))
     a("")
     a("  {}<text>{}                 Chat with current mode".format(B, R))
     a("  {}/key <key>{}             Set API Key".format(B, R))
