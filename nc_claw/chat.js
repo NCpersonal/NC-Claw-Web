@@ -343,6 +343,7 @@ function streamChat(body) {
                         if (evt.type === 'commands') {
                             var cmds = evt.commands || [];
                             var needConfirm = evt.need_confirm || false;
+                            var hasDanger = evt.has_danger || false;
                             if (cmds.length > 0) {
                                 pendingCommands = cmds;
                                 currentToolBubble = createToolBubble();
@@ -350,10 +351,11 @@ function streamChat(body) {
                                 toolCount = 0;
                                 for (var j = 0; j < cmds.length; j++) {
                                     toolCount++;
-                                    var item = createToolItem(cmds[j], j);
+                                    var item = createToolItem(cmds[j], j, needConfirm);
                                     currentToolBody.appendChild(item);
                                 }
                                 updateToolCount(currentToolBubble, toolCount);
+                                // Global confirm bar only in confirm mode
                                 if (needConfirm) {
                                     showConfirmBar(currentToolBubble, cmds);
                                 }
@@ -482,38 +484,76 @@ function createToolItem(cmd, index) {
             badgeHtml +
         '</div>';
 
+    // Always show Run/Skip for danger/warn commands
     if (cmd.level === 'danger' || cmd.level === 'warn') {
         var confirmDiv = document.createElement('div');
         confirmDiv.className = 'tool-item-confirm';
-        confirmDiv.innerHTML =
-            '<button class="item-btn run-' + cmd.level + '" onclick="runSingleCommand(this, ' + index + ')" ' +
-            'title="Run this command" aria-label="Run this command">Run</button>' +
-            '<button class="item-btn skip" onclick="skipSingleCommand(this)" ' +
-            'title="Skip this command" aria-label="Skip this command">Skip</button>';
+
+        var runBtn = document.createElement('button');
+        runBtn.className = 'item-btn run-' + cmd.level;
+        runBtn.textContent = 'Run';
+        runBtn.title = 'Run this command';
+        runBtn.setAttribute('aria-label', 'Run this command');
+        runBtn.addEventListener('click', function() {
+            console.log('[Claw] Run clicked:', cmd.type, cmd.args);
+            runSingleCommand(item, cmd);
+        });
+
+        var skipBtn = document.createElement('button');
+        skipBtn.className = 'item-btn skip';
+        skipBtn.textContent = 'Skip';
+        skipBtn.title = 'Skip this command';
+        skipBtn.setAttribute('aria-label', 'Skip this command');
+        skipBtn.addEventListener('click', function() {
+            console.log('[Claw] Skip clicked:', cmd.type, cmd.args);
+            skipSingleCommand(item);
+        });
+
+        confirmDiv.appendChild(runBtn);
+        confirmDiv.appendChild(skipBtn);
         item.appendChild(confirmDiv);
     }
 
     return item;
 }
 
-function runSingleCommand(btn, index) {
-    var item = btn.closest('.tool-item');
-    var args = item.getAttribute('data-args');
+function runSingleCommand(item, cmd) {
+    console.log('[Claw] Executing:', cmd.type, cmd.args);
 
+    // Disable all buttons in this item
     var btns = item.querySelectorAll('.item-btn');
-    btns.forEach(function(b) { b.disabled = true; });
-    btn.textContent = 'Running...';
+    for (var i = 0; i < btns.length; i++) {
+        btns[i].disabled = true;
+    }
 
-    fetch(API_BASE + '/api/exec', {
+    // Show running state
+    var runBtn = item.querySelector('.item-btn.run-' + cmd.level);
+    if (runBtn) runBtn.textContent = 'Running...';
+
+    var url = API_BASE + '/api/exec';
+    var body = JSON.stringify({ command: cmd.args });
+    console.log('[Claw] POST', url, body);
+
+    fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: args })
+        body: body
     })
-    .then(function(r) { return r.json(); })
+    .then(function(r) {
+        console.log('[Claw] Response status:', r.status);
+        return r.json();
+    })
     .then(function(d) {
+        console.log('[Claw] Result:', d);
+
+        // Remove confirm buttons
         var confirmDiv = item.querySelector('.tool-item-confirm');
         if (confirmDiv) confirmDiv.remove();
+
+        // Show result
         appendToolResult(item, d.result || '[No output]');
+
+        // Show status
         var status = document.createElement('div');
         status.className = 'tool-item-status ran';
         status.textContent = 'Executed at ' + timeNow();
@@ -521,8 +561,13 @@ function runSingleCommand(btn, index) {
         scrollToBottom();
     })
     .catch(function(e) {
+        console.error('[Claw] Exec error:', e);
+
+        // Remove confirm buttons
         var confirmDiv = item.querySelector('.tool-item-confirm');
         if (confirmDiv) confirmDiv.remove();
+
+        // Show error
         var status = document.createElement('div');
         status.className = 'tool-item-status blocked';
         status.textContent = 'Failed: ' + e.message;
@@ -531,16 +576,19 @@ function runSingleCommand(btn, index) {
     });
 }
 
-function skipSingleCommand(btn) {
-    var item = btn.closest('.tool-item');
+function skipSingleCommand(item) {
+    // Remove confirm buttons
     var confirmDiv = item.querySelector('.tool-item-confirm');
     if (confirmDiv) confirmDiv.remove();
+
+    // Show skipped status
     var status = document.createElement('div');
     status.className = 'tool-item-status skipped';
     status.textContent = 'Skipped by user';
     item.appendChild(status);
     scrollToBottom();
 }
+
 
 function appendToolResult(targetItem, content) {
     var isError = content.indexOf('[Error') === 0 ||
