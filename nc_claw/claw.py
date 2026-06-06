@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-__version__ = "0.8.5"
+__version__ = "0.8.4"
 """
-Claw v0.8.5 — Terminal AI Assistant
+Claw v0.8.4 — Terminal AI Assistant
   Multi-Agent · Group Chat · Per-Agent API · Skills · Web Gateway
 Usage: python claw.py
 Zero dependencies — Python 3.8+ stdlib only.
@@ -1187,7 +1187,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except BrokenPipeError:
+            pass
 
     def send_ndjson_header(self):
         self.send_response(200)
@@ -1250,7 +1253,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             })
             return
         if path == "/api/health":
-            self.send_json({"status": "ok", "version": "0.8.5", "model": config["model"],
+            self.send_json({"status": "ok", "version": "0.8.4", "model": config["model"],
                 "agents": list(agents.keys()), "groups": list(groups.keys()),
                 "uptime": time.time() - gateway_start_time,
                 "has_sudo": bool(sudo_password),
@@ -1281,7 +1284,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if path == "/api/usage": self.send_json(token_usage); return
         
         if path == "/api":
-            self.send_json({"name": "Claw Gateway", "version": "0.8.5",
+            self.send_json({"name": "Claw Gateway", "version": "0.8.4",
                 "endpoints": {"GET /": "Chat UI", "GET /api/health": "Health", "GET /api/config": "Config",
                     "GET /api/skills": "Skills", "GET /api/agents": "Agents", "GET /api/groups": "Groups",
                     "POST /api/chat": "Chat (stream)", "POST /api/chat/sync": "Chat (sync)",
@@ -1470,14 +1473,26 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if path == "/api/exec":
             data = self.read_body()
             cmd_str = data.get("command", "").strip()
-            if not cmd_str: self.send_json({"error": "Empty"}, 400); return
+            if not cmd_str:
+                try: self.send_json({"error": "Empty"}, 400)
+                except BrokenPipeError: pass
+                return
             gw_log_info("EXEC", cmd_str[:60])
             t0 = time.time()
-            result = _run(cmd_str, 60)
-            elapsed = time.time() - t0
-            self.send_json({"command": cmd_str, "result": result, "time": round(elapsed, 3)})
+            try:
+                result = _run(cmd_str, 60)
+                elapsed = time.time() - t0
+                try:
+                    self.send_json({"command": cmd_str, "result": result, "time": round(elapsed, 3)})
+                except BrokenPipeError:
+                    pass
+            except Exception as e:
+                gw_log_error("EXEC", str(e)[:80])
+                try:
+                    self.send_json({"command": cmd_str, "result": "[Error] " + str(e), "time": 0})
+                except BrokenPipeError:
+                    pass
             return
-        self.send_json({"error": "Not found"}, 404)
 
         if path == "/api/exec-batch":
             data = self.read_body()
@@ -1530,6 +1545,51 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if not cmds:
             return None
 
+        # Classify all commands
+        cmd_info = []
+        has_danger = False
+        for c in cmds:
+            level, reason = classify_command(c)
+            cmd_info.append({"cmd": c, "level": level, "reason": reason})
+            if level in ("danger", "warn"):
+                has_danger = True
+
+        if streaming:
+            self.send_event({"type": "commands", "commands": [
+                {"type": ci["cmd"]["type"], "args": ci["cmd"].get("args", ""),
+                 "level": ci["level"], "reason": ci["reason"]}
+                for ci in cmd_info],
+                "need_confirm": confirm,
+                "has_danger": has_danger})
+
+        # Global confirm mode: don't auto-execute anything
+        if confirm:
+            return None
+
+        # Has danger but no global confirm: execute safe ones, skip dangerous ones (frontend handles)
+        if has_danger:
+            return None
+
+        # All safe: auto-execute
+        results = []
+        for i, ci in enumerate(cmd_info):
+            c = ci["cmd"]
+            gw_log_info("CMD", "{} {}".format(c["type"], c.get("args", "")[:40]))
+            res = execute_command(c)
+            results.append(res)
+            if streaming:
+                self.send_event({"type": "result", "index": i, "content": res})
+        history.append({"role": "user", "content": "[Command results]\n" + "\n".join(
+            "[{}:{}] -> {}".format(cmd_info[j]["cmd"]["type"], cmd_info[j]["cmd"].get("args", ""), results[j])
+            for j in range(len(cmd_info)))})
+        api_msgs2 = api_msgs_builder()
+        reply2 = stream_api(api_msgs2,
+            lambda tok: self.send_event({"type": "token", "content": tok}) if streaming else None,
+            api_key=api_key, api_base=api_base, model=model)
+        if reply2:
+            history.append({"role": "assistant", "content": reply2})
+            return reply2
+        return None
         # Classify all commands
         cmd_info = []
         has_danger = False
@@ -1862,7 +1922,7 @@ def print_status():
 
     print()
     print("  " + sep)
-    print("  {}{}{} Claw v0.8.5".format(C.B, C.CYN, C.R))
+    print("  {}{}{} Claw v0.8.4".format(C.B, C.CYN, C.R))
     print("  " + sep)
     print()
     print("  {}Model:{}    {}".format(C.DIM, C.R, config["model"]))
@@ -1902,7 +1962,7 @@ def cmd_help():
     L = []
     a = L.append
     a("")
-    a("  {}{}\U0001F43E Claw v0.8.5 — Commands{}".format(C.CYN, B, R))
+    a("  {}{}\U0001F43E Claw v0.8.4 — Commands{}".format(C.CYN, B, R))
     a("")
     a("  {}<text>{}                 Chat with current mode".format(B, R))
     a("  {}/key <key>{}             Set API Key".format(B, R))

@@ -479,10 +479,11 @@ function createToolItem(cmd, index) {
 
     item.innerHTML =
         '<div class="tool-cmd">' +
-            '<span class="tool-cmd-type">$ ' + escapeHtml(cmd.type) + '</span>' +
+            '<span class="tool-cmd-type">$ ' + escapeHtml(cmd.type) + '</span> ' +
             '<span class="tool-cmd-args">' + escapeHtml(cmd.args) + '</span>' +
             badgeHtml +
         '</div>';
+
 
     // Always show Run/Skip for danger/warn commands
     if (cmd.level === 'danger' || cmd.level === 'warn') {
