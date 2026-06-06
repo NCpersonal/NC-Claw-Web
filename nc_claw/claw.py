@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-__version__ = "0.6.16"
+__version__ = "0.6.17"
 """
-Claw v0.6.16 — Terminal AI Assistant
+Claw v0.6.17 — Terminal AI Assistant
   Multi-Agent · Group Chat · Per-Agent API · Skills · Web Gateway
 Usage: python claw.py
 Zero dependencies — Python 3.8+ stdlib only.
@@ -230,19 +230,21 @@ def build_system():
         "You are Claw, a local AI assistant. Execute commands to help the user.\n"
         "\n## Commands (embed naturally in your reply)\n" + cmd_list +
         "\n## Command Format Rules (MUST follow)\n"
-        "- Each command MUST be on its OWN line, separated from prose by a blank line\n"
+        "- Each command MUST be wrapped: start with // and end with \\\\\n"
+        "- Example: //exec ls -la\\\\\n"
+        "- Multi-line (write, python, exec): start //keyword, content on next lines, end with \\\\\n"
         "- NEVER wrap commands in backticks or code fences\n"
-        "- NEVER add trailing punctuation to commands\n"
-        "- Multi-line: command keyword on one line, content, then //end\n"
         "- Pipes (|) only work with //exec, NOT with //read\n"
         "- Always use //exec for shell commands (ls, cat, grep, etc.), NOT //ls, //cat\n"
-        "- //python does NOT support -c flag, write code directly after //python and end with //end\n"
+        "- //python does NOT support -c flag, write code directly after //python\n"
+        "- The \\\\ MUST be on its OWN line with nothing else\n"
         "\n## Rules\n"
         "- Use commands when helpful, naturally within text\n"
         "- Multiple commands OK; results return automatically, then continue\n"
         "- Ask before destructive ops. Be concise.\n"
         "\nEnvironment: " + si + " | Shell: " + sh + " | CWD: " + os.getcwd() + "\n"
     )
+
 
     if WORKSPACE_FILE.exists():
         try:
@@ -605,87 +607,201 @@ def _strip_artifacts(text):
     text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
     return text
 
+def _strip_artifacts(text):
+    """Remove markdown fences but preserve // commands and \\ end markers."""
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    # Remove triple backtick fences only
+    text = re.sub(r'```[a-zA-Z]*\s*\n', '\n', text)
+    text = re.sub(r'```\s*\n', '\n', text)
+    text = text.replace('```', '')
+    # Remove inline backticks
+    text = re.sub(r'`([^`]*)`', r'\1', text)
+    # Remove bold
+    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
+    return text
+
+
 def parse_commands(text):
+    """
+    New delimiter-based parser:
+    - // marks the START of a command block
+    - \\ marks the END of a command block (on its own line)
+    - Everything between is the command
+    - Single-line: //exec ls -la\\
+    - Multi-line: //write /path\\
+                   content line 1
+                   content line 2
+                   \\
+    """
     cmds = []
     clean = _strip_artifacts(text)
     lines = clean.split("\n")
 
-    # ── Pass 1: Line-by-line multi-line commands ──
     i = 0
     while i < len(lines):
-        stripped = lines[i].strip()
+        line = lines[i].rstrip()
 
-        # //write path
-        wm = re.match(r'^(?://)?write\s+(.+)$', stripped)
-        if wm:
-            path = wm.group(1).strip().strip('`"\'*')
-            content_lines = []
-            i += 1
-            while i < len(lines):
-                if re.match(r'^(?://)?end\s*$', lines[i].strip()):
-                    break
-                content_lines.append(lines[i])
-                i += 1
-            cmds.append({"type": "write", "args": path, "content": "\n".join(content_lines)})
-            i += 1
-            continue
-
-        # //python ... //end
-        pm = re.match(r'^(?://)?python\s*$', stripped)
-        if pm:
-            code_lines = []
-            i += 1
-            while i < len(lines):
-                if re.match(r'^(?://)?end\s*$', lines[i].strip()):
-                    break
-                code_lines.append(lines[i])
-                i += 1
-            cmds.append({"type": "python", "args": "\n".join(code_lines)})
-            i += 1
-            continue
-
-        # //exec ... //end
-        em = re.match(r'^(?://)?exec\s*$', stripped)
-        if em:
-            cmd_lines = []
-            i += 1
-            while i < len(lines):
-                if re.match(r'^(?://)?end\s*$', lines[i].strip()):
-                    break
-                cmd_lines.append(lines[i])
-                i += 1
-            if cmd_lines:
-                cmds.append({"type": "exec", "args": "\n".join(cmd_lines).strip()})
-            i += 1
-            continue
-
-        i += 1
-
-    # ── Pass 2: Single-line commands (scan every line) ──
-    for line in lines:
+        # ── Look for // marker ──
         stripped = line.strip()
-        sm = re.match(r'^(?://)?(\w+)\b\s*(.*?)\s*$', stripped)
-        if sm:
-            ct = sm.group(1).lower()
-            args = sm.group(2).strip().strip('`"\'*').rstrip('.,;:!?')
-            if ct not in CMD_TYPES:
+
+        # Check if line starts with //
+        if not stripped.startswith("//"):
+            i += 1
+            continue
+
+        # Extract content after //
+        content = stripped[2:].strip()
+
+        # If the content is just "\\" (empty command with immediate close), skip
+        if content == "\\":
+            i += 1
+            continue
+
+        # ── Case 1: Single-line command ──
+        # Pattern: //type args\  (ends with backslash on same line)
+        if content.endswith("\\"):
+            # Remove trailing backslash
+            inner = content[:-1].strip()
+            cmd = _parse_single_command(inner)
+            if cmd:
+                cmds.append(cmd)
+            i += 1
+            continue
+
+        # ── Case 2: Single-line without trailing backslash ──
+        # Check if next non-empty line is just \\
+        # Or if this is a simple command on one line
+        # First, try to parse as a complete single-line command
+        parts = content.split(None, 1)
+        if parts:
+            keyword = parts[0].lower()
+            if keyword in CMD_TYPES:
+                # Single-line keywords that don't need multi-line
+                if keyword in ("read", "exec", "copy", "move", "mkdir", "tree",
+                               "search", "info", "process", "kill", "env", "time",
+                               "ip", "ping", "git", "open", "browse", "download"):
+                    # Check: is there a \\ on the next non-empty line?
+                    # Look ahead for \\
+                    found_end = False
+                    for j in range(i + 1, min(i + 3, len(lines))):
+                        if lines[j].strip() == "\\":
+                            found_end = True
+                            # Collect any lines between as args (for multi-line exec)
+                            body_lines = []
+                            for k in range(i + 1, j):
+                                l = lines[k].strip()
+                                if l and l != "\\":
+                                    body_lines.append(l)
+                            if body_lines:
+                                args = content + " " + " ".join(body_lines)
+                            else:
+                                args = content
+                            cmd = _parse_single_command(args)
+                            if cmd:
+                                cmds.append(cmd)
+                            i = j + 1  # skip past \\
+                            break
+                    if found_end:
+                        continue
+
+                    # No \\ found nearby - treat as single-line command
+                    # (for backwards compatibility when AI forgets \\)
+                    cmd = _parse_single_command(content)
+                    if cmd:
+                        cmds.append(cmd)
+                    i += 1
+                    continue
+
+                # Multi-line keywords: write, python, exec (without args)
+                if keyword in ("write", "python"):
+                    # Collect until \\
+                    body_lines = []
+                    i += 1
+                    while i < len(lines):
+                        if lines[i].strip() == "\\":
+                            break
+                        body_lines.append(lines[i])
+                        i += 1
+                    # i now points at \\ or past end
+                    if keyword == "write":
+                        path = parts[1].strip().strip('`"\'*') if len(parts) > 1 else ""
+                        cmds.append({"type": "write", "args": path, "content": "\n".join(body_lines)})
+                    elif keyword == "python":
+                        code = "\n".join(body_lines)
+                        # If original line had args (e.g. //python -c "..."\\)
+                        if len(parts) > 1:
+                            extra = parts[1].strip()
+                            cm = re.match(r'^-c\s+["\'](.*)["\']$', extra, re.DOTALL)
+                            if cm:
+                                code = cm.group(1)
+                            else:
+                                code = extra + "\n" + code
+                        cmds.append({"type": "python", "args": code.strip()})
+                    i += 1  # skip past \\
+                    continue
+
+            # exec without args on first line, multi-line body
+            if keyword == "exec" and len(parts) == 1:
+                body_lines = []
+                i += 1
+                while i < len(lines):
+                    if lines[i].strip() == "\\":
+                        break
+                    body_lines.append(lines[i])
+                    i += 1
+                if body_lines:
+                    cmds.append({"type": "exec", "args": "\n".join(body_lines).strip()})
+                i += 1
                 continue
-            if ct == "write":
-                continue
-            if ct in ("python", "exec") and not args:
-                continue
-            if not args and ct not in ("info", "time", "ip"):
-                continue
-            # Deduplicate: skip if already captured in pass 1
-            dup = False
-            for existing in cmds:
-                if existing["type"] == ct and existing.get("args") == args:
-                    dup = True
-                    break
-            if not dup:
-                cmds.append({"type": ct, "args": args})
+
+        # ── Fallback: unknown format, try to parse the content ──
+        cmd = _parse_single_command(content)
+        if cmd:
+            cmds.append(cmd)
+
+        # Skip to next \\ if present
+        i += 1
+        while i < len(lines) and lines[i].strip() != "\\":
+            i += 1
+        if i < len(lines) and lines[i].strip() == "\\":
+            i += 1
 
     return cmds
+
+
+def _parse_single_command(text):
+    """Parse a single command line like 'exec ls -la' or 'read /path'."""
+    text = text.strip().strip('`"\'*').rstrip('.,;:!?')
+    if not text:
+        return None
+
+    parts = text.split(None, 1)
+    if not parts:
+        return None
+
+    keyword = parts[0].lower()
+    args = parts[1].strip() if len(parts) > 1 else ""
+
+    # Handle alias routing
+    if keyword in CMD_ALIAS:
+        args = keyword + (" " + args if args else "")
+        keyword = CMD_ALIAS[keyword]
+
+    if keyword not in CMD_TYPES:
+        return None
+
+    # Skip bare "write" or "python" without content (should be multi-line)
+    if keyword == "write" and not args:
+        return None
+    if keyword == "python" and not args:
+        return None
+
+    # Skip bare exec/info/time/ip without args (info/time/ip are OK without args)
+    if keyword == "exec" and not args:
+        return None
+
+    return {"type": keyword, "args": args}
+
 
 def _run(cmd, timeout=30):
     global sudo_password
@@ -1042,7 +1158,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             })
             return
         if path == "/api/health":
-            self.send_json({"status": "ok", "version": "0.6.16", "model": config["model"],
+            self.send_json({"status": "ok", "version": "0.6.17", "model": config["model"],
                 "agents": list(agents.keys()), "groups": list(groups.keys()),
                 "uptime": time.time() - gateway_start_time,
                 "has_sudo": bool(sudo_password),
@@ -1073,7 +1189,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if path == "/api/usage": self.send_json(token_usage); return
         
         if path == "/api":
-            self.send_json({"name": "Claw Gateway", "version": "0.6.16",
+            self.send_json({"name": "Claw Gateway", "version": "0.6.17",
                 "endpoints": {"GET /": "Chat UI", "GET /api/health": "Health", "GET /api/config": "Config",
                     "GET /api/skills": "Skills", "GET /api/agents": "Agents", "GET /api/groups": "Groups",
                     "POST /api/chat": "Chat (stream)", "POST /api/chat/sync": "Chat (sync)",
@@ -1617,7 +1733,7 @@ def print_status():
 
     print()
     print("  " + sep)
-    print("  {}{}{} Claw v0.6.16".format(C.B, C.CYN, C.R))
+    print("  {}{}{} Claw v0.6.17".format(C.B, C.CYN, C.R))
     print("  " + sep)
     print()
     print("  {}Model:{}    {}".format(C.DIM, C.R, config["model"]))
@@ -1657,7 +1773,7 @@ def cmd_help():
     L = []
     a = L.append
     a("")
-    a("  {}{}\U0001F43E Claw v0.6.16 — Commands{}".format(C.CYN, B, R))
+    a("  {}{}\U0001F43E Claw v0.6.17 — Commands{}".format(C.CYN, B, R))
     a("")
     a("  {}<text>{}                 Chat with current mode".format(B, R))
     a("  {}/key <key>{}             Set API Key".format(B, R))

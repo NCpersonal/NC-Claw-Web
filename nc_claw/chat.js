@@ -1,49 +1,134 @@
 // ━━━ Config ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-const API_BASE = '';
-let currentMode = 'default';
-let currentTarget = '';
-let streaming = false;
-let tokenTotal = 0;
+var API_BASE = '';
+var currentMode = 'default';
+var currentTarget = '';
+var streaming = false;
+var tokenTotal = 0;
+var markedReady = false;
+var hljsReady = false;
 
-// ━━━ Marked Config ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-marked.setOptions({
-    highlight: function(code, lang) {
-        if (lang && hljs.getLanguage(lang)) {
-            try { return hljs.highlight(code, { language: lang }).value; }
-            catch (e) { /* ignore */ }
-        }
-        try { return hljs.highlightAuto(code).value; }
-        catch (e) { /* ignore */ }
-        return code;
-    },
-    breaks: true,
-    gfm: true,
-    headerIds: false,
-    mangle: false
-});
-
-function renderMarkdown(text) {
-    if (!text) return '';
-    try {
-        return marked.parse(text);
-    } catch (e) {
-        return text.replace(/</g, '&lt;').replace(/\n/g, '<br>');
-    }
-}
-
-// ━━━ Color Utilities ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-const COLOR_NAMES = ['green', 'blue', 'magenta', 'yellow', 'red', 'cyan'];
+var COLOR_NAMES = ['green', 'blue', 'magenta', 'yellow', 'red', 'cyan'];
 
 function colorClass(idx) {
     return COLOR_NAMES[(idx || 0) % COLOR_NAMES.length];
 }
 
+// ━━━ Markdown Setup ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function setupMarked() {
+    if (typeof marked === 'undefined') {
+        console.error('[Claw] marked.js not loaded');
+        showDebugBadge('marked.js FAIL', false);
+        return false;
+    }
+    try {
+        marked.setOptions({
+            breaks: true,
+            gfm: true,
+            headerIds: false,
+            mangle: false
+        });
+        markedReady = true;
+        console.log('[Claw] marked.js ready');
+        return true;
+    } catch (e) {
+        console.error('[Claw] marked setup error:', e);
+        return false;
+    }
+}
+
+function setupHighlight() {
+    if (typeof hljs === 'undefined') {
+        console.warn('[Claw] highlight.js not loaded, code blocks will be plain');
+        return false;
+    }
+    hljsReady = true;
+    console.log('[Claw] highlight.js ready');
+    return true;
+}
+
+function renderMarkdown(text) {
+    if (!text) return '';
+
+    // If marked is available, use it
+    if (markedReady) {
+        try {
+            var html = marked.parse(text);
+            return html;
+        } catch (e) {
+            console.error('[Claw] marked.parse error:', e);
+        }
+    }
+
+    // Fallback: basic regex-based markdown
+    return fallbackMarkdown(text);
+}
+
+function fallbackMarkdown(text) {
+    var html = escapeHtml(text);
+
+    // Code blocks ```lang\n...\n```
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(m, lang, code) {
+        return '<pre><code>' + code.trim() + '</code></pre>';
+    });
+
+    // Inline code
+    html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+
+    // Bold
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+    // Italic
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+    // Headers
+    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+    html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+
+    // Line breaks
+    html = html.replace(/\n/g, '<br>');
+
+    return html;
+}
+
+function highlightCodeBlocks(container) {
+    if (!hljsReady) return;
+    try {
+        container.querySelectorAll('pre code').forEach(function(block) {
+            if (!block.dataset.highlighted) {
+                hljs.highlightElement(block);
+                block.dataset.highlighted = 'true';
+            }
+        });
+    } catch (e) { /* ignore */ }
+}
+
+function showDebugBadge(msg, ok) {
+    var existing = document.querySelector('.md-debug');
+    if (existing) existing.remove();
+    var badge = document.createElement('div');
+    badge.className = 'md-debug ' + (ok ? 'ok' : 'fail');
+    badge.textContent = msg;
+    document.body.appendChild(badge);
+    setTimeout(function() { badge.remove(); }, 5000);
+}
+
 // ━━━ Init ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 window.addEventListener('DOMContentLoaded', function() {
+    // Setup markdown libraries
+    setupMarked();
+    setupHighlight();
+
+    // Show status badge
+    if (markedReady) {
+        showDebugBadge('Markdown ✓', true);
+    } else {
+        showDebugBadge('Markdown ✗ (fallback)', false);
+    }
+
     loadHealth();
     loadAgents();
     loadGroups();
@@ -60,7 +145,7 @@ function autoResize() {
     });
 }
 
-// ━━━ API Calls ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━ API ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function loadHealth() {
     fetch(API_BASE + '/api/health')
@@ -98,7 +183,7 @@ function loadAgents() {
                 list.appendChild(div);
             });
         })
-        .catch(function() { /* ignore */ });
+        .catch(function() {});
 }
 
 function loadGroups() {
@@ -116,12 +201,12 @@ function loadGroups() {
                 div.innerHTML =
                     '<span class="entity-dot avatar-green"></span>' +
                     '<span class="entity-name">' + escapeHtml(g.name) + '</span>' +
-                    '<span class="entity-role">' + (g.members ? g.members.length : 0) + ' members</span>';
+                    '<span class="entity-role">' + (g.members ? g.members.length : 0) + '</span>';
                 div.addEventListener('click', function() { selectGroup(g.name, div); });
                 list.appendChild(div);
             });
         })
-        .catch(function() { /* ignore */ });
+        .catch(function() {});
 }
 
 function loadSkills() {
@@ -137,7 +222,7 @@ function loadSkills() {
                 tag.title = s.desc;
                 tag.setAttribute('role', 'button');
                 tag.setAttribute('tabindex', '0');
-                tag.setAttribute('aria-label', (s.loaded ? 'Unload ' : 'Load ') + 'skill ' + s.name);
+                tag.setAttribute('aria-label', (s.loaded ? 'Unload ' : 'Load ') + s.name);
                 tag.addEventListener('click', function() {
                     fetch(API_BASE + '/api/skills', {
                         method: 'POST',
@@ -148,7 +233,7 @@ function loadSkills() {
                 list.appendChild(tag);
             });
         })
-        .catch(function() { /* ignore */ });
+        .catch(function() {});
 }
 
 function loadHistory() {
@@ -162,7 +247,7 @@ function loadHistory() {
             });
             scrollToBottom();
         })
-        .catch(function() { /* ignore */ });
+        .catch(function() {});
 }
 
 // ━━━ Mode Switching ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -233,22 +318,17 @@ function sendMessage() {
     var input = document.getElementById('input');
     var msg = input.value.trim();
     if (!msg || streaming) return;
-
     input.value = '';
     input.style.height = 'auto';
-
     appendMessage('user', msg);
     scrollToBottom();
-
-    var body = { message: msg, mode: currentMode, target: currentTarget };
-    streamChat(body);
+    streamChat({ message: msg, mode: currentMode, target: currentTarget });
 }
 
 function streamChat(body) {
     streaming = true;
     document.getElementById('send-btn').disabled = true;
 
-    // Remove welcome
     var welcome = document.querySelector('.welcome');
     if (welcome) welcome.remove();
 
@@ -259,7 +339,6 @@ function streamChat(body) {
     var fullText = '';
     var started = false;
 
-    // Typing indicator
     bodyEl.innerHTML = '<span class="thinking">Thinking...</span>';
 
     fetch(API_BASE + '/api/chat', {
@@ -272,24 +351,14 @@ function streamChat(body) {
         var decoder = new TextDecoder();
         var buffer = '';
 
-        function read() {
+        function pump() {
             return reader.read().then(function(result) {
                 if (result.done) {
-                    // Final render
-                    if (fullText) {
-                        bodyEl.innerHTML = renderMarkdown(fullText);
-                        bodyEl.querySelectorAll('pre code').forEach(function(block) {
-                            hljs.highlightElement(block);
-                        });
-                    }
-                    streaming = false;
-                    document.getElementById('send-btn').disabled = false;
-                    scrollToBottom();
+                    finishStream(bodyEl, fullText);
                     return;
                 }
 
                 buffer += decoder.decode(result.value, { stream: true });
-
                 var lines = buffer.split('\n');
                 buffer = lines.pop() || '';
 
@@ -314,7 +383,9 @@ function streamChat(body) {
                                 bodyEl.innerHTML = '';
                             }
                             fullText += evt.content;
+                            // Real-time markdown render
                             bodyEl.innerHTML = renderMarkdown(fullText);
+                            highlightCodeBlocks(bodyEl);
                             scrollToBottom();
                         }
 
@@ -334,12 +405,9 @@ function streamChat(body) {
                             var lastCmd = bodyEl.querySelector('.cmd-block:last-child');
                             if (lastCmd) {
                                 var isError = evt.content.indexOf('[Error') === 0 || evt.content.indexOf('[BLOCKED') === 0;
-                                var spanClass = isError ? 'cmd-error' : 'cmd-result';
-                                var newline = document.createTextNode('\n');
                                 var span = document.createElement('span');
-                                span.className = spanClass;
-                                span.textContent = evt.content;
-                                lastCmd.appendChild(newline);
+                                span.className = isError ? 'cmd-error' : 'cmd-result';
+                                span.textContent = '\n' + evt.content;
                                 lastCmd.appendChild(span);
                             }
                         }
@@ -355,14 +423,14 @@ function streamChat(body) {
 
                         if (evt.type === 'done') break;
 
-                    } catch (e) { /* skip malformed lines */ }
+                    } catch (e) { /* skip malformed */ }
                 }
 
-                return read();
+                return pump();
             });
         }
 
-        return read();
+        return pump();
     })
     .catch(function(e) {
         bodyEl.innerHTML = '<span class="error">Connection error: ' + escapeHtml(e.message) + '</span>';
@@ -370,6 +438,17 @@ function streamChat(body) {
         document.getElementById('send-btn').disabled = false;
         scrollToBottom();
     });
+}
+
+function finishStream(bodyEl, fullText) {
+    // Final clean render
+    if (fullText) {
+        bodyEl.innerHTML = renderMarkdown(fullText);
+        highlightCodeBlocks(bodyEl);
+    }
+    streaming = false;
+    document.getElementById('send-btn').disabled = false;
+    scrollToBottom();
 }
 
 // ━━━ Message DOM ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -389,7 +468,7 @@ function appendMessage(role, content) {
                 '<span class="msg-name agent-name-blue">You</span>' +
                 '<span class="msg-time">' + timeNow() + '</span>' +
             '</div>' +
-            '<div class="msg-body user-msg">' + escapeHtml(content) + '</div>';
+            '<div class="msg-body">' + escapeHtml(content) + '</div>';
     } else {
         div.innerHTML =
             '<div class="msg-header">' +
@@ -398,10 +477,7 @@ function appendMessage(role, content) {
                 '<span class="msg-time">' + timeNow() + '</span>' +
             '</div>' +
             '<div class="msg-body">' + renderMarkdown(content) + '</div>';
-        // Highlight code blocks in history
-        div.querySelectorAll('pre code').forEach(function(block) {
-            hljs.highlightElement(block);
-        });
+        highlightCodeBlocks(div);
     }
 
     container.appendChild(div);
@@ -454,7 +530,5 @@ function escapeHtml(text) {
 
 function timeNow() {
     var now = new Date();
-    var h = String(now.getHours()).padStart(2, '0');
-    var m = String(now.getMinutes()).padStart(2, '0');
-    return h + ':' + m;
+    return String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
 }
