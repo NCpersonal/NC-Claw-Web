@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-__version__ = "0.8.2"
+__version__ = "0.8.3"
 """
-Claw v0.8.2 — Terminal AI Assistant
+Claw v0.8.3 — Terminal AI Assistant
   Multi-Agent · Group Chat · Per-Agent API · Skills · Web Gateway
 Usage: python claw.py
 Zero dependencies — Python 3.8+ stdlib only.
@@ -669,10 +669,17 @@ def parse_commands(text):
     """
     Parse commands from AI reply.
 
-    Primary:   //keyword args          (single-line)
-               //keyword [args]        (multi-line, body until //end)
-
-    Fallback:  bare 'command args' lines when no // found at all
+    Single-line: //exec uname -a
+                 //read /etc/os-release
+    Multi-line:  //write /path
+                   content
+                 //end
+                 //python
+                   code
+                 //end
+                 //exec
+                   complex multi-line shell script
+                 //end
     """
     cmds = []
     clean = _strip_artifacts(text)
@@ -696,7 +703,6 @@ def parse_commands(text):
             i += 1
             continue
 
-        # Alias routing
         if keyword in CMD_ALIAS:
             first_args = keyword + (" " + first_args if first_args else "")
             keyword = CMD_ALIAS[keyword]
@@ -705,15 +711,16 @@ def parse_commands(text):
             i += 1
             continue
 
-        # ── Single-line keyword: no body needed ──
+        # ── Pure single-line keywords (never have a body) ──
         if keyword in SINGLELINE_KEYWORDS and keyword not in MULTILINE_KEYWORDS:
             if first_args:
                 cmds.append({"type": keyword, "args": first_args})
             i += 1
             continue
 
-        # ── Multi-line keyword: collect body until //end ──
-        if keyword in MULTILINE_KEYWORDS:
+        # ── write: always multi-line (first_args = path, body = content) ──
+        if keyword == "write":
+            path = first_args.strip('`"\'*')
             body_lines = []
             i += 1
             while i < len(lines):
@@ -721,63 +728,80 @@ def parse_commands(text):
                     break
                 body_lines.append(lines[i])
                 i += 1
-
             if i < len(lines) and lines[i].strip() == "//end":
-                i += 1  # consume //end
-
-            body = "\n".join(body_lines)
-
-            if keyword == "write":
-                path = first_args.strip('`"\'*') if first_args else ""
-                if path:
-                    cmds.append({"type": "write", "args": path, "content": body})
-
-            elif keyword == "python":
-                code = body
-                if first_args:
-                    cm = re.match(r'^-c\s+["\'](.*)["\']$', first_args, re.DOTALL)
-                    if cm:
-                        code = cm.group(1)
-                    elif not body.strip():
-                        code = first_args
-                    else:
-                        code = first_args + "\n" + body
-                if code.strip():
-                    cmds.append({"type": "python", "args": code.strip()})
-
-            elif keyword == "exec":
-                combined = (first_args + "\n" + body).strip() if first_args and body.strip() else body.strip() or first_args
-                if combined:
-                    cmds.append({"type": "exec", "args": combined})
+                i += 1
+            if path:
+                cmds.append({"type": "write", "args": path, "content": "\n".join(body_lines)})
             continue
 
-        # ── Fallback: treat as single-line ──
+        # ── python: multi-line body unless -c flag ──
+        if keyword == "python":
+            if first_args:
+                cm = re.match(r'^-c\s+["\'](.*)["\']$', first_args, re.DOTALL)
+                if cm:
+                    cmds.append({"type": "python", "args": cm.group(1)})
+                    i += 1
+                    continue
+                # Has args but not -c, collect body too
+            body_lines = []
+            i += 1
+            while i < len(lines):
+                if lines[i].strip() == "//end":
+                    break
+                body_lines.append(lines[i])
+                i += 1
+            if i < len(lines) and lines[i].strip() == "//end":
+                i += 1
+            code = "\n".join(body_lines)
+            if first_args:
+                code = first_args + "\n" + code
+            if code.strip():
+                cmds.append({"type": "python", "args": code.strip()})
+            continue
+
+        # ── exec: single-line if has args, multi-line if alone ──
+        if keyword == "exec":
+            if first_args:
+                # Single-line: //exec uname -a
+                cmds.append({"type": "exec", "args": first_args})
+                i += 1
+                continue
+            # No args: multi-line body until //end
+            body_lines = []
+            i += 1
+            while i < len(lines):
+                if lines[i].strip() == "//end":
+                    break
+                body_lines.append(lines[i])
+                i += 1
+            if i < len(lines) and lines[i].strip() == "//end":
+                i += 1
+            if body_lines:
+                cmds.append({"type": "exec", "args": "\n".join(body_lines).strip()})
+            continue
+
+        # ── Fallback ──
         if first_args:
-            cmd = _parse_single_line(keyword + " " + first_args)
-            if cmd:
-                cmds.append(cmd)
+            cmds.append({"type": keyword, "args": first_args})
         i += 1
 
-    # ── Ultimate fallback: detect bare commands (AI forgot //) ──
+    # ── Ultimate fallback: bare commands (AI forgot //) ──
     if not cmds:
         for line in lines:
-            stripped = line.strip()
-            if not stripped or len(stripped) > 200:
+            bare = line.strip()
+            if not bare or len(bare) > 200:
                 continue
-            # Skip markdown/prose
-            if stripped.startswith(("#", ">", "|", "-", "*", "1.", "2.", "3.")):
+            if bare.startswith(("#", ">", "|", "-", "*", "1.", "2.", "3.")):
                 continue
-            if any(ch in stripped for ch in ("吗", "呢", "的", "是", "了", "在", "有", "我", "你")):
+            if any(ch in bare for ch in "吗呢的是了在我你"):
                 continue
-            parts = stripped.split(None, 1)
+            parts = bare.split(None, 1)
             if not parts:
                 continue
-            cmd_name = parts[0].lower()
-            if cmd_name in SHELL_BINS:
-                cmds.append({"type": "exec", "args": stripped})
+            if parts[0].lower() in SHELL_BINS:
+                cmds.append({"type": "exec", "args": bare})
 
     return cmds
-
 
 def _run(cmd, timeout=30):
     global sudo_password
@@ -1169,7 +1193,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             })
             return
         if path == "/api/health":
-            self.send_json({"status": "ok", "version": "0.8.2", "model": config["model"],
+            self.send_json({"status": "ok", "version": "0.8.3", "model": config["model"],
                 "agents": list(agents.keys()), "groups": list(groups.keys()),
                 "uptime": time.time() - gateway_start_time,
                 "has_sudo": bool(sudo_password),
@@ -1200,7 +1224,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if path == "/api/usage": self.send_json(token_usage); return
         
         if path == "/api":
-            self.send_json({"name": "Claw Gateway", "version": "0.8.2",
+            self.send_json({"name": "Claw Gateway", "version": "0.8.3",
                 "endpoints": {"GET /": "Chat UI", "GET /api/health": "Health", "GET /api/config": "Config",
                     "GET /api/skills": "Skills", "GET /api/agents": "Agents", "GET /api/groups": "Groups",
                     "POST /api/chat": "Chat (stream)", "POST /api/chat/sync": "Chat (sync)",
@@ -1751,7 +1775,7 @@ def print_status():
 
     print()
     print("  " + sep)
-    print("  {}{}{} Claw v0.8.2".format(C.B, C.CYN, C.R))
+    print("  {}{}{} Claw v0.8.3".format(C.B, C.CYN, C.R))
     print("  " + sep)
     print()
     print("  {}Model:{}    {}".format(C.DIM, C.R, config["model"]))
@@ -1791,7 +1815,7 @@ def cmd_help():
     L = []
     a = L.append
     a("")
-    a("  {}{}\U0001F43E Claw v0.8.2 — Commands{}".format(C.CYN, B, R))
+    a("  {}{}\U0001F43E Claw v0.8.3 — Commands{}".format(C.CYN, B, R))
     a("")
     a("  {}<text>{}                 Chat with current mode".format(B, R))
     a("  {}/key <key>{}             Set API Key".format(B, R))
