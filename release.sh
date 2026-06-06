@@ -71,3 +71,6 @@ echo -e "${G}------------------------------------${R}"
 echo -e "${D} PyPI:  pip install --upgrade nc-claw${R}"
 echo -e "${D} GitHub: https://github.com/NCpersonal/NC-Claw-Web${R}"
 echo ""
+echo "update nc-claw..."
+sudo pip install --upgrade nc-claw --break-system-packages
+echo -e "\n${G}Done!${R}"
