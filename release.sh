@@ -74,6 +74,7 @@ echo ""
 echo "update nc-claw..."
 # 由于 PyPI 的缓存，可能需要等几分钟才能安装到最新版本
 # 等待5秒钟后再安装最新版本
-sleep 5
+echo "wait 10 second..."
+sleep 10
 sudo pip install --upgrade nc-claw --break-system-packages
 echo -e "\n${G}Done!${R}"

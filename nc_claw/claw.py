@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-__version__ = "0.7.3"
+__version__ = "0.7.4"
 """
-Claw v0.7.3 — Terminal AI Assistant
+Claw v0.7.4 — Terminal AI Assistant
   Multi-Agent · Group Chat · Per-Agent API · Skills · Web Gateway
 Usage: python claw.py
 Zero dependencies — Python 3.8+ stdlib only.
@@ -571,19 +571,15 @@ def cmd_group(args):
 
 # ━━━ Command Parser & Executor ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# ━━━ 修复 2: CMD_TYPES 增加常用 shell 别名 + 自动路由 ━━━
-
 CMD_TYPES = [
     "exec", "open", "read", "write", "browse", "download",
     "copy", "move", "delete", "mkdir", "tree", "search",
     "info", "process", "kill", "env", "time", "ip", "ping",
     "python", "git",
-    # AI 常生成的 shell 别名，自动路由到 exec
     "ls", "cat", "head", "tail", "wc", "grep", "find",
     "df", "free", "uname", "whoami", "id", "pwd",
 ]
 
-# 别名 → exec 映射表
 CMD_ALIAS = {
     "ls": "exec", "cat": "exec", "head": "exec", "tail": "exec",
     "wc": "exec", "grep": "exec", "find": "exec", "df": "exec",
@@ -591,52 +587,91 @@ CMD_ALIAS = {
     "pwd": "exec",
 }
 
+MULTILINE_KEYWORDS = {"write", "python", "exec"}
+
+SINGLELINE_KEYWORDS = {
+    "read", "copy", "move", "mkdir", "tree", "search",
+    "info", "process", "kill", "env", "time", "ip",
+    "ping", "git", "open", "browse", "download",
+    "ls", "cat", "head", "tail", "wc", "grep", "find",
+    "df", "free", "uname", "whoami", "id", "pwd",
+}
+
+# Known shell binaries for bare-command fallback detection
+SHELL_BINS = {
+    "ls", "cat", "head", "tail", "grep", "find", "df", "free",
+    "uname", "whoami", "id", "pwd", "wc", "awk", "sed", "sort",
+    "ps", "top", "lsof", "ss", "ip", "ifconfig", "hostname",
+    "dpkg", "apt", "rpm", "pacman", "snap",
+    "systemctl", "journalctl", "dmesg", "mount", "blkid", "lsblk",
+    "lscpu", "lsusb", "lspci", "lsmod", "modprobe",
+    "ping", "curl", "wget", "ssh", "scp", "rsync",
+    "git", "docker", "podman",
+    "vcgencmd", "raspi-config", "gpio",
+    "python", "python3", "node", "npm",
+    "tar", "zip", "unzip", "gzip",
+    "chmod", "chown", "mkdir", "cp", "mv", "touch", "ln",
+    "echo", "date", "uptime", "file", "stat", "du",
+    "make", "gcc", "g++",
+    "htop", "nethogs", "tcpdump", "nmcli",
+    "getent", "cut", "tr", "tee", "xargs", "which",
+    "lsmod", "modinfo", "dmesg",
+}
 
 DANGER = [
     r'\brm\s+(-[a-zA-Z]*r|--recursive)\b', r'\bmkfs\b', r'\bdd\s+if=',
     r'\b(shutdown|reboot|halt)\b', r'\bkill\s+(-9\s+)?1\b', r'\brm\s+-rf\s+[~/]',
 ]
 
+
 def is_dangerous(cmd):
     return any(re.search(p, cmd, re.I) for p in DANGER)
 
+
 def _strip_artifacts(text):
-    """Remove markdown fences but preserve // commands."""
+    """Remove markdown fences/formatting but preserve // commands."""
     text = text.replace('\r\n', '\n').replace('\r', '\n')
-    # Remove triple backtick fences
     text = re.sub(r'```[a-zA-Z]*\s*\n', '\n', text)
     text = re.sub(r'```\s*\n', '\n', text)
     text = text.replace('```', '')
-    # Remove inline backticks
     text = re.sub(r'`([^`]*)`', r'\1', text)
-    # Remove bold
     text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
     return text
 
 
-# Multi-line keywords that use //end as delimiter
-MULTILINE_KEYWORDS = {"write", "python", "exec"}
-
-# Single-line keywords (no body)
-SINGLELINE_KEYWORDS = {
-    "read", "copy", "move", "mkdir", "tree", "search",
-    "info", "process", "kill", "env", "time", "ip",
-    "ping", "git", "open", "browse", "download",
-}
+def _parse_single_line(text):
+    """Parse 'keyword args' into a command dict, or None."""
+    text = text.strip().strip('`"\'*').rstrip('.,;:!?')
+    if not text:
+        return None
+    parts = text.split(None, 1)
+    if not parts:
+        return None
+    keyword = parts[0].lower()
+    args = parts[1].strip() if len(parts) > 1 else ""
+    # Alias routing
+    if keyword in CMD_ALIAS:
+        args = keyword + (" " + args if args else "")
+        keyword = CMD_ALIAS[keyword]
+    if keyword not in CMD_TYPES:
+        return None
+    if keyword == "write" and not args:
+        return None
+    if keyword == "python" and not args:
+        return None
+    if keyword == "exec" and not args:
+        return None
+    return {"type": keyword, "args": args}
 
 
 def parse_commands(text):
     """
-    Parse commands from AI reply text.
+    Parse commands from AI reply.
 
-    Rules:
-    - //keyword on its own line starts a command
-    - Single-line: //exec ls -la        (just one line, no //end needed)
-    - Multi-line:  //write /path        (content follows on next lines)
-                     line 1
-                     line 2
-                   //end                 (closes the command)
-    - //end without a preceding //keyword is ignored (treated as prose)
+    Primary:   //keyword args          (single-line)
+               //keyword [args]        (multi-line, body until //end)
+
+    Fallback:  bare 'command args' lines when no // found at all
     """
     cmds = []
     clean = _strip_artifacts(text)
@@ -646,7 +681,7 @@ def parse_commands(text):
     while i < len(lines):
         stripped = lines[i].strip()
 
-        # ── Detect command start: line starts with // followed by a known keyword ──
+        # ── Look for //keyword ──
         cmd_match = re.match(r'^//(\w+)(?:\s+(.*))?$', stripped)
         if not cmd_match:
             i += 1
@@ -655,29 +690,28 @@ def parse_commands(text):
         keyword = cmd_match.group(1).lower()
         first_args = (cmd_match.group(2) or "").strip().rstrip('.,;:!?')
 
-        # Skip //end appearing without a matching //keyword (stray //end)
+        # Skip stray //end
         if keyword == "end":
             i += 1
             continue
 
-        # Resolve alias (ls → exec, cat → exec, etc.)
+        # Alias routing
         if keyword in CMD_ALIAS:
             first_args = keyword + (" " + first_args if first_args else "")
             keyword = CMD_ALIAS[keyword]
 
-        # Unknown keyword, skip
         if keyword not in CMD_TYPES:
             i += 1
             continue
 
-        # ── Single-line keywords: no body collection needed ──
-        if keyword in SINGLELINE_KEYWORDS:
+        # ── Single-line keyword: no body needed ──
+        if keyword in SINGLELINE_KEYWORDS and keyword not in MULTILINE_KEYWORDS:
             if first_args:
                 cmds.append({"type": keyword, "args": first_args})
             i += 1
             continue
 
-        # ── Multi-line keywords: collect body until //end ──
+        # ── Multi-line keyword: collect body until //end ──
         if keyword in MULTILINE_KEYWORDS:
             body_lines = []
             i += 1
@@ -687,7 +721,6 @@ def parse_commands(text):
                 body_lines.append(lines[i])
                 i += 1
 
-            # i now points at //end or past end of text
             if i < len(lines) and lines[i].strip() == "//end":
                 i += 1  # consume //end
 
@@ -699,7 +732,6 @@ def parse_commands(text):
                     cmds.append({"type": "write", "args": path, "content": body})
 
             elif keyword == "python":
-                # Support //python -c "code" on same line
                 code = body
                 if first_args:
                     cm = re.match(r'^-c\s+["\'](.*)["\']$', first_args, re.DOTALL)
@@ -713,53 +745,37 @@ def parse_commands(text):
                     cmds.append({"type": "python", "args": code.strip()})
 
             elif keyword == "exec":
-                if body.strip():
-                    cmds.append({"type": "exec", "args": body.strip()})
-                elif first_args:
-                    cmds.append({"type": "exec", "args": first_args})
+                combined = (first_args + "\n" + body).strip() if first_args and body.strip() else body.strip() or first_args
+                if combined:
+                    cmds.append({"type": "exec", "args": combined})
             continue
 
-        # ── Fallback: treat as single-line command ──
-        full_args = first_args
-        if full_args:
-            cmds.append({"type": keyword, "args": full_args})
+        # ── Fallback: treat as single-line ──
+        if first_args:
+            cmd = _parse_single_line(keyword + " " + first_args)
+            if cmd:
+                cmds.append(cmd)
         i += 1
 
+    # ── Ultimate fallback: detect bare commands (AI forgot //) ──
+    if not cmds:
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or len(stripped) > 200:
+                continue
+            # Skip markdown/prose
+            if stripped.startswith(("#", ">", "|", "-", "*", "1.", "2.", "3.")):
+                continue
+            if any(ch in stripped for ch in ("吗", "呢", "的", "是", "了", "在", "有", "我", "你")):
+                continue
+            parts = stripped.split(None, 1)
+            if not parts:
+                continue
+            cmd_name = parts[0].lower()
+            if cmd_name in SHELL_BINS:
+                cmds.append({"type": "exec", "args": stripped})
+
     return cmds
-
-
-def _parse_single_command(text):
-    """Parse a single command line like 'exec ls -la' or 'read /path'."""
-    text = text.strip().strip('`"\'*').rstrip('.,;:!?')
-    if not text:
-        return None
-
-    parts = text.split(None, 1)
-    if not parts:
-        return None
-
-    keyword = parts[0].lower()
-    args = parts[1].strip() if len(parts) > 1 else ""
-
-    # Handle alias routing
-    if keyword in CMD_ALIAS:
-        args = keyword + (" " + args if args else "")
-        keyword = CMD_ALIAS[keyword]
-
-    if keyword not in CMD_TYPES:
-        return None
-
-    # Skip bare "write" or "python" without content (should be multi-line)
-    if keyword == "write" and not args:
-        return None
-    if keyword == "python" and not args:
-        return None
-
-    # Skip bare exec/info/time/ip without args (info/time/ip are OK without args)
-    if keyword == "exec" and not args:
-        return None
-
-    return {"type": keyword, "args": args}
 
 
 def _run(cmd, timeout=30):
@@ -788,33 +804,36 @@ def _run(cmd, timeout=30):
         out += ("\n" if out else "") + "[stderr] " + r.stderr
     if r.returncode != 0:
         out += "\n[exit: {}]".format(r.returncode)
-        if "sudo" in cmd and not use_sudo and "password" in (r.stderr or "").lower():
-            out += "\n[Hint: Set sudo password in Settings or use /sudo <password>]"
-        if use_sudo and r.returncode == 1 and "sorry" in (r.stderr or "").lower():
-            out += "\n[Hint: Wrong sudo password. Reset in Settings or /sudo <password>]"
     return (out or "[No output]").strip()[:10000]
+
 
 def _is_binary(path):
     try:
-        with open(path, "rb") as f: return b"\x00" in f.read(8192)
-    except: return False
+        with open(path, "rb") as f:
+            return b"\x00" in f.read(8192)
+    except:
+        return False
+
 
 def _quote_split(args, n):
     qparts = re.findall(r'(?:[^\s"]+|"[^"]*"|\'[^\']*\')+', args)
-    if len(qparts) < n: return None
+    if len(qparts) < n:
+        return None
     return [p.strip('"\'') for p in qparts]
+
 
 def execute_command(cmd):
     t, args = cmd["type"], cmd.get("args", "")
 
-    # 别名路由：ls/cat/... → exec
+    # Alias routing
     if t in CMD_ALIAS:
         args = t + (" " + args if args else "")
         t = CMD_ALIAS[t]
 
     try:
         if t == "exec":
-            if is_dangerous(args): return "[BLOCKED: {}]".format(args)
+            if is_dangerous(args):
+                return "[BLOCKED: {}]".format(args)
             return _run(args)
         if t == "open":
             s = platform.system()
@@ -823,30 +842,31 @@ def execute_command(cmd):
                     os.startfile(args)
                     return "[Opened: {}]".format(args)
                 elif s == "Darwin":
-                    cmd = ["open", args]
+                    c = ["open", args]
                 else:
-                    cmd = ["xdg-open", args]
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                    c = ["xdg-open", args]
+                r = subprocess.run(c, capture_output=True, text=True, timeout=10)
                 if r.returncode != 0:
                     return "[Error: {}]".format(r.stderr.strip() or "code {}".format(r.returncode))
                 return "[Opened: {}]".format(args)
             except FileNotFoundError:
-                return "[Error: xdg-open not found. Install: sudo apt install xdg-utils]"
+                return "[Error: xdg-open not found]"
             except subprocess.TimeoutExpired:
                 return "[Opened (background): {}]".format(args)
             except Exception as e:
                 return "[Error: {}]".format(e)
-
         if t == "read":
             p = Path(args).expanduser().resolve()
-            if not p.exists(): return "[Not found: {}]".format(args)
+            if not p.exists():
+                return "[Not found: {}]".format(args)
             if p.is_dir():
                 lines = ["{}  {}".format("[D]" if i.is_dir() else "[F]", i.name) for i in sorted(p.iterdir())[:200]]
                 return "\n".join(lines) or "[Empty]"
-            if _is_binary(p): return "[Binary: {}]".format(p)
+            if _is_binary(p):
+                return "[Binary: {}]".format(p)
             text = p.read_text("utf-8", errors="replace")
-            lines = text.split("\n")
-            return "\n".join(lines[:500]) + ("\n... [{} lines]".format(len(lines)) if len(lines) > 500 else "")
+            ls = text.split("\n")
+            return "\n".join(ls[:500]) + ("\n... [{} lines]".format(len(ls)) if len(ls) > 500 else "")
         if t == "write":
             p = Path(args).expanduser().resolve()
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -872,17 +892,24 @@ def execute_command(cmd):
             return "[Downloaded {} bytes to {}]".format(dst.stat().st_size, dst)
         if t == "copy":
             qp = _quote_split(args, 2)
-            if not qp: return "[Usage: //copy <src> <dst>]"
+            if not qp:
+                return "[Usage: //copy <src> <dst>]"
             src, dst = Path(qp[0]).expanduser().resolve(), Path(qp[1]).expanduser().resolve()
-            if not src.exists(): return "[Not found: {}]".format(src)
-            if src.is_dir(): shutil.copytree(str(src), str(dst))
-            else: dst.parent.mkdir(parents=True, exist_ok=True); shutil.copy2(str(src), str(dst))
+            if not src.exists():
+                return "[Not found: {}]".format(src)
+            if src.is_dir():
+                shutil.copytree(str(src), str(dst))
+            else:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(src), str(dst))
             return "[Copied to {}]".format(dst)
         if t == "move":
             qp = _quote_split(args, 2)
-            if not qp: return "[Usage: //move <src> <dst>]"
+            if not qp:
+                return "[Usage: //move <src> <dst>]"
             src, dst = Path(qp[0]).expanduser().resolve(), Path(qp[1]).expanduser().resolve()
-            if not src.exists(): return "[Not found: {}]".format(src)
+            if not src.exists():
+                return "[Not found: {}]".format(src)
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(src), str(dst))
             return "[Moved to {}]".format(dst)
@@ -896,45 +923,61 @@ def execute_command(cmd):
             parts = args.split("--depth")
             dp = Path(parts[0].strip() or ".").expanduser().resolve()
             depth = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else 3
-            if not dp.is_dir(): return "[Not a dir]"
+            if not dp.is_dir():
+                return "[Not a dir]"
             lines = [str(dp)]
             def walk(d, prefix="", lvl=0):
-                if lvl >= depth: return
-                try: entries = sorted(d.iterdir(), key=lambda x: (x.is_file(), x.name.lower()))
-                except: return
+                if lvl >= depth:
+                    return
+                try:
+                    entries = sorted(d.iterdir(), key=lambda x: (x.is_file(), x.name.lower()))
+                except:
+                    return
                 for idx, e in enumerate(entries):
                     last = idx == len(entries) - 1
                     lines.append("{}--- {}{}".format(prefix, e.name, "/" if e.is_dir() else ""))
-                    if e.is_dir(): walk(e, prefix + ("    " if last else "|   "), lvl + 1)
+                    if e.is_dir():
+                        walk(e, prefix + ("    " if last else "|   "), lvl + 1)
             walk(dp)
             return "\n".join(lines[:300])
         if t == "search":
             qp = re.findall(r'(?:[^\s"]+|"[^"]*"|\'[^\']*\')+', args)
-            if len(qp) < 2: return "[Usage: //search <pat> <dir>]"
+            if len(qp) < 2:
+                return "[Usage: //search <pat> <dir>]"
             sp = qp[0].strip('"\'')
             sd = Path(qp[-1].strip('"\'')).expanduser().resolve()
             results = []
             for p in sd.rglob("*{}*".format(sp)):
                 results.append("[name] {}".format(p))
-                if len(results) >= 50: break
+                if len(results) >= 50:
+                    break
             for p in sd.rglob("*"):
-                if not p.is_file() or p.stat().st_size > 1_000_000 or _is_binary(p): continue
+                if not p.is_file() or p.stat().st_size > 1_000_000 or _is_binary(p):
+                    continue
                 try:
-                    for i, line in enumerate(p.read_text("utf-8", errors="replace").split("\n"), 1):
+                    for ii, line in enumerate(p.read_text("utf-8", errors="replace").split("\n"), 1):
                         if re.search(re.escape(sp), line, re.I):
-                            results.append("[grep] {}:{}: {}".format(p, i, line.strip()[:120]))
-                            if len(results) >= 50: break
-                except: pass
-                if len(results) >= 50: break
+                            results.append("[grep] {}:{}: {}".format(p, ii, line.strip()[:120]))
+                            if len(results) >= 50:
+                                break
+                except:
+                    pass
+                if len(results) >= 50:
+                    break
             return "\n".join(results) or "[No matches]"
         if t == "info":
-            lines = ["OS: {} {} ({})".format(platform.system(), platform.release(), platform.machine()),
-                     "Host: {}".format(platform.node()), "Python: {}".format(platform.python_version()),
-                     "CWD: {}".format(os.getcwd()), "PID: {}".format(os.getpid())]
+            lines = [
+                "OS: {} {} ({})".format(platform.system(), platform.release(), platform.machine()),
+                "Host: {}".format(platform.node()),
+                "Python: {}".format(platform.python_version()),
+                "CWD: {}".format(os.getcwd()),
+                "PID: {}".format(os.getpid()),
+            ]
             try:
                 u = shutil.disk_usage(str(Path.home()))
                 lines.append("Disk: {}G / {}G".format(u.used // (1024**3), u.total // (1024**3)))
-            except: pass
+            except:
+                pass
             return "\n".join(lines)
         if t == "process":
             flt = args.split("--filter")[1].strip() if "--filter" in args else ""
@@ -942,31 +985,39 @@ def execute_command(cmd):
             if flt and platform.system() != "Windows":
                 lines = out.split("\n")
                 matched = [l for l in lines[1:] if flt.lower() in l.lower()]
-                return (lines[0] if lines else "") + "\n" + "\n".join(matched[:30]) if matched else "[No matches]"
+                return ((lines[0] if lines else "") + "\n" + "\n".join(matched[:30])) if matched else "[No matches]"
             return "\n".join(out.split("\n")[:35])
         if t == "kill":
-            if not args: return "[Usage: //kill <pid|name>]"
-            if args.isdigit(): os.kill(int(args), signal.SIGTERM); return "[SIGTERM {}]".format(args)
+            if not args:
+                return "[Usage: //kill <pid|name>]"
+            if args.isdigit():
+                os.kill(int(args), signal.SIGTERM)
+                return "[SIGTERM {}]".format(args)
             _run("pkill -f {}".format(args) if platform.system() != "Windows" else "taskkill /IM {} /F".format(args))
             return "[Killed: {}]".format(args)
         if t == "env":
-            if not args: return "\n".join("{}={}".format(k, v[:80]) for k, v in sorted(os.environ.items()))
+            if not args:
+                return "\n".join("{}={}".format(k, v[:80]) for k, v in sorted(os.environ.items()))
             v = os.getenv(args)
             return "{}={}".format(args, v) if v else "[Not set]"
         if t == "time":
             now = datetime.datetime.now()
             return "Local: {}\nUTC: {}\nUnix: {:.0f}".format(
-                now.strftime("%Y-%m-%d %H:%M:%S"), datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), time.time())
+                now.strftime("%Y-%m-%d %H:%M:%S"),
+                datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                time.time())
         if t == "ip":
             lines = ["[Local] " + _run("hostname -I 2>/dev/null || ifconfig | grep 'inet '")]
             try:
                 import urllib.request
                 lines.append("[Public] " + urllib.request.urlopen("https://api.ipify.org", 5).read().decode())
-            except: lines.append("[Public] Failed")
+            except:
+                lines.append("[Public] Failed")
             return "\n".join(lines)
         if t == "ping":
             parts = args.split("--count")
-            host, cnt = parts[0].strip(), (parts[1].strip() if len(parts) > 1 else "4")
+            host = parts[0].strip()
+            cnt = parts[1].strip() if len(parts) > 1 else "4"
             flag = "-n" if platform.system() == "Windows" else "-c"
             return _run("ping {} {} {}".format(flag, cnt, host), 15)
         if t == "python":
@@ -981,18 +1032,18 @@ def execute_command(cmd):
                     exec(textwrap.dedent(code), {
                         "__builtins__": __builtins__,
                         "os": os, "sys": sys, "Path": Path,
-                        "json": json, "re": re, "time": time
+                        "json": json, "re": re, "time": time,
                     })
                 return buf.getvalue().strip() or "[No output]"
             except Exception as e:
                 return "[Error] {}: {}".format(type(e).__name__, e)
-        if t == "git": return _run("git {}".format(args))
+        if t == "git":
+            return _run("git {}".format(args))
         return "[Unknown: {}]".format(t)
-    except subprocess.TimeoutExpired: return "[Timeout 30s]"
-    except Exception as e: return "[Error: {}: {}]".format(type(e).__name__, e)
-
-
-
+    except subprocess.TimeoutExpired:
+        return "[Timeout 30s]"
+    except Exception as e:
+        return "[Error: {}: {}]".format(type(e).__name__, e)
 
 # ━━━ Streaming API Client ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -1117,7 +1168,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             })
             return
         if path == "/api/health":
-            self.send_json({"status": "ok", "version": "0.7.3", "model": config["model"],
+            self.send_json({"status": "ok", "version": "0.7.4", "model": config["model"],
                 "agents": list(agents.keys()), "groups": list(groups.keys()),
                 "uptime": time.time() - gateway_start_time,
                 "has_sudo": bool(sudo_password),
@@ -1148,7 +1199,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if path == "/api/usage": self.send_json(token_usage); return
         
         if path == "/api":
-            self.send_json({"name": "Claw Gateway", "version": "0.7.3",
+            self.send_json({"name": "Claw Gateway", "version": "0.7.4",
                 "endpoints": {"GET /": "Chat UI", "GET /api/health": "Health", "GET /api/config": "Config",
                     "GET /api/skills": "Skills", "GET /api/agents": "Agents", "GET /api/groups": "Groups",
                     "POST /api/chat": "Chat (stream)", "POST /api/chat/sync": "Chat (sync)",
@@ -1692,7 +1743,7 @@ def print_status():
 
     print()
     print("  " + sep)
-    print("  {}{}{} Claw v0.7.3".format(C.B, C.CYN, C.R))
+    print("  {}{}{} Claw v0.7.4".format(C.B, C.CYN, C.R))
     print("  " + sep)
     print()
     print("  {}Model:{}    {}".format(C.DIM, C.R, config["model"]))
@@ -1732,7 +1783,7 @@ def cmd_help():
     L = []
     a = L.append
     a("")
-    a("  {}{}\U0001F43E Claw v0.7.3 — Commands{}".format(C.CYN, B, R))
+    a("  {}{}\U0001F43E Claw v0.7.4 — Commands{}".format(C.CYN, B, R))
     a("")
     a("  {}<text>{}                 Chat with current mode".format(B, R))
     a("  {}/key <key>{}             Set API Key".format(B, R))
