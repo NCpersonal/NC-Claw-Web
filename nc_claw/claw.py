@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-__version__ = "0.8.4"
-"""
-Claw v0.8.4 — Terminal AI Assistant
-  Multi-Agent · Group Chat · Per-Agent API · Skills · Web Gateway
-Usage: python claw.py
-Zero dependencies — Python 3.8+ stdlib only.
-"""
+from . import __version__
 
 import json, os, sys, subprocess, platform, re, time, shutil, signal, readline, threading, datetime
 from pathlib import Path
@@ -1603,45 +1597,6 @@ class GatewayHandler(BaseHTTPRequestHandler):
             history.append({"role": "assistant", "content": reply2})
             return reply2
         return None
-        # Classify all commands
-        cmd_info = []
-        has_danger = False
-        for c in cmds:
-            level, reason = classify_command(c)
-            cmd_info.append({"cmd": c, "level": level, "reason": reason})
-            if level in ("danger", "warn"):
-                has_danger = True
-
-        if streaming:
-            self.send_event({"type": "commands", "commands": [
-                {"type": ci["cmd"]["type"], "args": ci["cmd"].get("args", ""),
-                 "level": ci["level"], "reason": ci["reason"]}
-                for ci in cmd_info], "need_confirm": confirm or has_danger})
-
-        # If confirm mode OR any dangerous commands, don't auto-execute
-        if confirm or has_danger:
-            return None
-
-        # Safe commands: execute immediately
-        results = []
-        for i, ci in enumerate(cmd_info):
-            c = ci["cmd"]
-            gw_log_info("CMD", "{} {}".format(c["type"], c.get("args", "")[:40]))
-            res = execute_command(c)
-            results.append(res)
-            if streaming:
-                self.send_event({"type": "result", "index": i, "content": res})
-        history.append({"role": "user", "content": "[Command results]\n" + "\n".join(
-            "[{}:{}] -> {}".format(cmd_info[j]["cmd"]["type"], cmd_info[j]["cmd"].get("args", ""), results[j])
-            for j in range(len(cmd_info)))})
-        api_msgs2 = api_msgs_builder()
-        reply2 = stream_api(api_msgs2,
-            lambda tok: self.send_event({"type": "token", "content": tok}) if streaming else None,
-            api_key=api_key, api_base=api_base, model=model)
-        if reply2:
-            history.append({"role": "assistant", "content": reply2})
-            return reply2
-        return None
 
 
 
@@ -1932,10 +1887,9 @@ def print_status():
 
     sep = C.DIM + "\u2500" * 40 + C.R
     paw = "\U0001F43E"
-
     print()
     print("  " + sep)
-    print("  {}{}{} Claw v0.8.4".format(C.B, C.CYN, C.R))
+    print("  {}{}{} Claw v{}".format(C.B, C.CYN, C.R, __version__))
     print("  " + sep)
     print()
     print("  {}Model:{}    {}".format(C.DIM, C.R, config["model"]))
@@ -1975,7 +1929,7 @@ def cmd_help():
     L = []
     a = L.append
     a("")
-    a("  {}{}\U0001F43E Claw v0.8.4 — Commands{}".format(C.CYN, B, R))
+    a("  {}{}\U0001F43E Claw v{} — Commands{}".format(C.CYN, B, __version__, R))
     a("")
     a("  {}<text>{}                 Chat with current mode".format(B, R))
     a("  {}/key <key>{}             Set API Key".format(B, R))
