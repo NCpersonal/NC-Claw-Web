@@ -997,7 +997,18 @@ def execute_command(cmd):
             return "[Moved to {}]".format(dst)
         if t == "delete":
             p = Path(args).expanduser().resolve()
-            return "[BLOCKED: use //exec rm]" if p.exists() else "[Not found]"
+            if not p.exists():
+                return "[Not found]"
+            try:
+                if p.is_dir():
+                    shutil.rmtree(str(p))
+                else:
+                    p.unlink()
+                return "[Deleted: {}]".format(p)
+            except Exception as e:
+                return "[Error: {}]".format(e)
+        return "[Error: {}]".format(e)
+
         if t == "mkdir":
             Path(args).expanduser().resolve().mkdir(parents=True, exist_ok=True)
             return "[Created: {}]".format(args)
