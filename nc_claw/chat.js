@@ -1,5 +1,3 @@
-// ━━━ Config ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 var API_BASE = '';
 var currentMode = 'default';
 var currentTarget = '';
@@ -7,6 +5,7 @@ var streaming = false;
 var tokenTotal = 0;
 var markedReady = false;
 var hljsReady = false;
+var commandConfirm = true;  // default on
 
 var COLOR_NAMES = ['green', 'blue', 'magenta', 'yellow', 'red', 'cyan'];
 
@@ -14,83 +13,42 @@ function colorClass(idx) {
     return COLOR_NAMES[(idx || 0) % COLOR_NAMES.length];
 }
 
-// ━━━ Markdown Setup ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━ Markdown ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function setupMarked() {
-    if (typeof marked === 'undefined') {
-        console.error('[Claw] marked.js not loaded');
-        showDebugBadge('marked.js FAIL', false);
-        return false;
-    }
+    if (typeof marked === 'undefined') { return false; }
     try {
-        marked.setOptions({
-            breaks: true,
-            gfm: true,
-            headerIds: false,
-            mangle: false
-        });
+        marked.setOptions({ breaks: true, gfm: true, headerIds: false, mangle: false });
         markedReady = true;
-        console.log('[Claw] marked.js ready');
         return true;
-    } catch (e) {
-        console.error('[Claw] marked setup error:', e);
-        return false;
-    }
+    } catch (e) { return false; }
 }
 
 function setupHighlight() {
-    if (typeof hljs === 'undefined') {
-        console.warn('[Claw] highlight.js not loaded, code blocks will be plain');
-        return false;
-    }
+    if (typeof hljs === 'undefined') return false;
     hljsReady = true;
-    console.log('[Claw] highlight.js ready');
     return true;
 }
 
 function renderMarkdown(text) {
     if (!text) return '';
-
-    // If marked is available, use it
     if (markedReady) {
-        try {
-            var html = marked.parse(text);
-            return html;
-        } catch (e) {
-            console.error('[Claw] marked.parse error:', e);
-        }
+        try { return marked.parse(text); } catch (e) { /* fall through */ }
     }
-
-    // Fallback: basic regex-based markdown
     return fallbackMarkdown(text);
 }
 
 function fallbackMarkdown(text) {
-    var html = escapeHtml(text);
-
-    // Code blocks ```lang\n...\n```
-    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(m, lang, code) {
-        return '<pre><code>' + code.trim() + '</code></pre>';
-    });
-
-    // Inline code
-    html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-
-    // Bold
-    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-
-    // Italic
-    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-    // Headers
-    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-    html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-
-    // Line breaks
-    html = html.replace(/\n/g, '<br>');
-
-    return html;
+    var h = escapeHtml(text);
+    h = h.replace(/```(\w*)\n([\s\S]*?)```/g, function(m, l, c) { return '<pre><code>' + c.trim() + '</code></pre>'; });
+    h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+    h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    h = h.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+    h = h.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+    h = h.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+    h = h.replace(/\n/g, '<br>');
+    return h;
 }
 
 function highlightCodeBlocks(container) {
@@ -105,30 +63,11 @@ function highlightCodeBlocks(container) {
     } catch (e) { /* ignore */ }
 }
 
-function showDebugBadge(msg, ok) {
-    var existing = document.querySelector('.md-debug');
-    if (existing) existing.remove();
-    var badge = document.createElement('div');
-    badge.className = 'md-debug ' + (ok ? 'ok' : 'fail');
-    badge.textContent = msg;
-    document.body.appendChild(badge);
-    setTimeout(function() { badge.remove(); }, 5000);
-}
-
-// ━━━ Init ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━ Init ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 window.addEventListener('DOMContentLoaded', function() {
-    // Setup markdown libraries
     setupMarked();
     setupHighlight();
-
-    // Show status badge
-    if (markedReady) {
-        showDebugBadge('Markdown ✓', true);
-    } else {
-        showDebugBadge('Markdown ✗ (fallback)', false);
-    }
-
     loadHealth();
     loadAgents();
     loadGroups();
@@ -145,7 +84,7 @@ function autoResize() {
     });
 }
 
-// ━━━ API ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━ API ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function loadHealth() {
     fetch(API_BASE + '/api/health')
@@ -160,6 +99,17 @@ function loadHealth() {
         .catch(function() {
             document.getElementById('status-text').textContent = 'Offline';
         });
+}
+
+function loadConfig() {
+    fetch(API_BASE + '/api/config')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.command_confirm !== undefined) {
+                commandConfirm = d.command_confirm;
+            }
+        })
+        .catch(function() {});
 }
 
 function loadAgents() {
@@ -250,7 +200,7 @@ function loadHistory() {
         .catch(function() {});
 }
 
-// ━━━ Mode Switching ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━ Mode Switching ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function switchMode(mode) {
     currentMode = mode;
@@ -296,16 +246,12 @@ function clearActiveItems() {
 
 function updateTitle() {
     var el = document.getElementById('chat-title');
-    if (currentMode === 'agent' && currentTarget) {
-        el.textContent = '@' + currentTarget;
-    } else if (currentMode === 'group' && currentTarget) {
-        el.textContent = '#' + currentTarget;
-    } else {
-        el.textContent = 'Claw';
-    }
+    if (currentMode === 'agent' && currentTarget) el.textContent = '@' + currentTarget;
+    else if (currentMode === 'group' && currentTarget) el.textContent = '#' + currentTarget;
+    else el.textContent = 'Claw';
 }
 
-// ━━━ Chat ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━ Chat ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function handleKey(e) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -322,7 +268,7 @@ function sendMessage() {
     input.style.height = 'auto';
     appendMessage('user', msg);
     scrollToBottom();
-    streamChat({ message: msg, mode: currentMode, target: currentTarget });
+    streamChat({ message: msg, mode: currentMode, target: currentTarget, confirm: commandConfirm });
 }
 
 function streamChat(body) {
@@ -343,6 +289,7 @@ function streamChat(body) {
     var currentToolBubble = null;
     var currentToolBody = null;
     var toolCount = 0;
+    var pendingCommands = [];
 
     bodyEl.innerHTML = '<span class="thinking">Thinking...</span>';
 
@@ -393,10 +340,11 @@ function streamChat(body) {
                             scrollToBottom();
                         }
 
-                        // ── Commands: create a new system-tool bubble ──
                         if (evt.type === 'commands') {
                             var cmds = evt.commands || [];
+                            var needConfirm = evt.need_confirm || false;
                             if (cmds.length > 0) {
+                                pendingCommands = cmds;
                                 currentToolBubble = createToolBubble();
                                 currentToolBody = currentToolBubble.querySelector('.tool-body');
                                 toolCount = 0;
@@ -413,23 +361,22 @@ function streamChat(body) {
                                     currentToolBody.appendChild(item);
                                 }
                                 updateToolCount(currentToolBubble, toolCount);
+
+                                // Show confirm bar if needed
+                                if (needConfirm) {
+                                    showConfirmBar(currentToolBubble, pendingCommands);
+                                }
+
                                 scrollToBottom();
                             }
                         }
 
-                        // ── Result: append to current tool bubble ──
                         if (evt.type === 'result') {
                             if (currentToolBody) {
                                 var items = currentToolBody.querySelectorAll('.tool-item');
                                 var targetItem = items[evt.index] || items[items.length - 1];
                                 if (targetItem) {
-                                    var isError = evt.content.indexOf('[Error') === 0 ||
-                                                  evt.content.indexOf('[BLOCKED') === 0 ||
-                                                  evt.content.indexOf('[Not found') === 0;
-                                    var resultDiv = document.createElement('div');
-                                    resultDiv.className = 'tool-result' + (isError ? ' has-error' : '');
-                                    resultDiv.textContent = evt.content;
-                                    targetItem.appendChild(resultDiv);
+                                    appendToolResult(targetItem, evt.content);
                                 }
                                 scrollToBottom();
                             }
@@ -473,7 +420,8 @@ function finishStream(bodyEl, fullText) {
     scrollToBottom();
 }
 
-// ── Create a system tool call bubble ──
+// ━━━ Tool Bubble ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 function createToolBubble() {
     var container = document.getElementById('messages');
     var div = document.createElement('div');
@@ -481,10 +429,10 @@ function createToolBubble() {
     div.innerHTML =
         '<div class="tool-container">' +
             '<div class="tool-header" onclick="toggleToolBody(this)">' +
-                '<span class="tool-icon">⚙</span>' +
+                '<span class="tool-icon">&#9881;</span>' +
                 '<span>System Tool Call</span>' +
                 '<span class="tool-count"></span>' +
-                '<span class="tool-toggle">▼</span>' +
+                '<span class="tool-toggle">&#9660;</span>' +
             '</div>' +
             '<div class="tool-body"></div>' +
         '</div>';
@@ -505,19 +453,132 @@ function toggleToolBody(header) {
     header.classList.toggle('collapsed');
 }
 
+function appendToolResult(targetItem, content) {
+    var isError = content.indexOf('[Error') === 0 ||
+                  content.indexOf('[BLOCKED') === 0 ||
+                  content.indexOf('[Not found') === 0;
+    var resultDiv = document.createElement('div');
+    resultDiv.className = 'tool-result' + (isError ? ' has-error' : '');
+    resultDiv.textContent = content;
+    targetItem.appendChild(resultDiv);
+}
 
-function finishStream(bodyEl, fullText) {
-    // Final clean render
-    if (fullText) {
-        bodyEl.innerHTML = renderMarkdown(fullText);
-        highlightCodeBlocks(bodyEl);
-    }
-    streaming = false;
-    document.getElementById('send-btn').disabled = false;
+// ━━━ Confirm Bar ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function showConfirmBar(bubble, commands) {
+    var container = bubble.querySelector('.tool-container');
+    var bar = document.createElement('div');
+    bar.className = 'tool-confirm-bar';
+    bar.innerHTML =
+        '<span class="confirm-info">Execute ' + commands.length +
+        (commands.length === 1 ? ' command' : ' commands') + '?</span>' +
+        '<button class="confirm-btn skip" onclick="cancelCommands(this)" title="Skip commands" aria-label="Skip commands">Skip</button>' +
+        '<button class="confirm-btn run" onclick="confirmCommands(this)" title="Run commands" aria-label="Run commands">Run</button>';
+    container.appendChild(bar);
     scrollToBottom();
 }
 
-// ━━━ Message DOM ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function confirmCommands(btn) {
+    var bar = btn.closest('.tool-confirm-bar');
+    var bubble = btn.closest('.system-tool');
+    var toolBody = bubble.querySelector('.tool-body');
+    var items = toolBody.querySelectorAll('.tool-item');
+    var commands = [];
+
+    // Collect commands from DOM
+    items.forEach(function(item) {
+        var type = item.querySelector('.tool-cmd-type');
+        var args = item.querySelector('.tool-cmd-args');
+        if (type && args) {
+            commands.push({
+                type: type.textContent.replace('$ ', ''),
+                args: args.textContent
+            });
+        }
+    });
+
+    // Disable buttons
+    bar.querySelectorAll('.confirm-btn').forEach(function(b) { b.disabled = true; });
+    btn.textContent = 'Running...';
+
+    // Execute via API
+    fetch(API_BASE + '/api/exec-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ commands: commands })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        // Remove confirm bar
+        bar.remove();
+
+        // Show results
+        var results = d.results || [];
+        for (var i = 0; i < results.length; i++) {
+            var targetItem = items[i] || items[items.length - 1];
+            if (targetItem) {
+                appendToolResult(targetItem, results[i].result);
+            }
+        }
+
+        // Show status
+        var status = document.createElement('div');
+        status.className = 'tool-status executed';
+        status.textContent = 'Executed at ' + timeNow();
+        bubble.querySelector('.tool-container').appendChild(status);
+
+        // Continue conversation with results
+        var resultText = '[Command results]\n';
+        for (var j = 0; j < results.length; j++) {
+            resultText += '[' + results[j].type + ':' + results[j].args + '] -> ' + results[j].result + '\n';
+        }
+
+        scrollToBottom();
+
+        // Send results back as continuation
+        streamChat({
+            message: resultText,
+            mode: currentMode,
+            target: currentTarget,
+            confirm: commandConfirm
+        });
+    })
+    .catch(function(e) {
+        bar.remove();
+        var status = document.createElement('div');
+        status.className = 'tool-status skipped';
+        status.textContent = 'Execution failed: ' + e.message;
+        bubble.querySelector('.tool-container').appendChild(status);
+        streaming = false;
+        document.getElementById('send-btn').disabled = false;
+        scrollToBottom();
+    });
+}
+
+function cancelCommands(btn) {
+    var bar = btn.closest('.tool-confirm-bar');
+    var bubble = btn.closest('.system-tool');
+
+    // Remove confirm bar
+    bar.remove();
+
+    // Show cancelled status
+    var status = document.createElement('div');
+    status.className = 'tool-status skipped';
+    status.textContent = 'Skipped by user at ' + timeNow();
+    bubble.querySelector('.tool-container').appendChild(status);
+
+    // Continue AI without command results
+    var resultText = '[User cancelled command execution. Please continue without running commands.]';
+    streamChat({
+        message: resultText,
+        mode: currentMode,
+        target: currentTarget,
+        confirm: commandConfirm
+    });
+}
+
+// ━━━ Message DOM ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function appendMessage(role, content) {
     var container = document.getElementById('messages');
@@ -565,7 +626,7 @@ function createAssistantBubble() {
     return div;
 }
 
-// ━━━ Helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━━ Helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function scrollToBottom() {
     var el = document.getElementById('messages');
@@ -577,7 +638,7 @@ function clearChat() {
     var container = document.getElementById('messages');
     container.innerHTML =
         '<div class="welcome">' +
-            '<div class="welcome-icon">🐾</div>' +
+            '<div class="welcome-icon">&#128062;</div>' +
             '<div class="welcome-title">Claw Terminal AI</div>' +
             '<div class="welcome-sub">Multi-Agent · Group Chat · Commands</div>' +
         '</div>';

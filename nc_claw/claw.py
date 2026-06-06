@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-__version__ = "0.8.1"
+__version__ = "0.8.2"
 """
-Claw v0.8.1 — Terminal AI Assistant
+Claw v0.8.2 — Terminal AI Assistant
   Multi-Agent · Group Chat · Per-Agent API · Skills · Web Gateway
 Usage: python claw.py
 Zero dependencies — Python 3.8+ stdlib only.
@@ -32,6 +32,7 @@ config = {
     "api_base": os.getenv("AI_API_BASE", "https://api.openai.com/v1"),
     "model": os.getenv("AI_MODEL", "gpt-4o"),
     "skills": [],
+    "command_confirm": True,
 }
 
 if CONFIG_FILE.exists():
@@ -1168,7 +1169,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             })
             return
         if path == "/api/health":
-            self.send_json({"status": "ok", "version": "0.8.1", "model": config["model"],
+            self.send_json({"status": "ok", "version": "0.8.2", "model": config["model"],
                 "agents": list(agents.keys()), "groups": list(groups.keys()),
                 "uptime": time.time() - gateway_start_time,
                 "has_sudo": bool(sudo_password),
@@ -1199,7 +1200,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if path == "/api/usage": self.send_json(token_usage); return
         
         if path == "/api":
-            self.send_json({"name": "Claw Gateway", "version": "0.8.1",
+            self.send_json({"name": "Claw Gateway", "version": "0.8.2",
                 "endpoints": {"GET /": "Chat UI", "GET /api/health": "Health", "GET /api/config": "Config",
                     "GET /api/skills": "Skills", "GET /api/agents": "Agents", "GET /api/groups": "Groups",
                     "POST /api/chat": "Chat (stream)", "POST /api/chat/sync": "Chat (sync)",
@@ -1402,6 +1403,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         user_msg = data.get("message", "").strip()
         mode = data.get("mode", "default")
         target = data.get("target", "")
+        confirm = data.get("confirm", config.get("command_confirm", False))
         if not user_msg: self.send_json({"error": "Empty"}, 400); return
         if not config.get("api_key"): self.send_json({"error": "No API key"}, 400); return
 
@@ -1411,11 +1413,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if streaming: self.send_ndjson_header()
         try:
             if mode == "agent" and target and target in agents:
-                self._gw_agent_chat(user_msg, target, streaming)
+                self._gw_agent_chat(user_msg, target, streaming, confirm=confirm)
             elif mode == "group" and target and target in groups:
-                self._gw_group_chat(user_msg, target, streaming)
+                self._gw_group_chat(user_msg, target, streaming, confirm=confirm)
             else:
-                self._gw_default_chat(user_msg, streaming)
+                self._gw_default_chat(user_msg, streaming, confirm=confirm)
         except Exception as e:
             gw_log_error("ERR", str(e)[:80])
             if streaming: self.send_event({"type": "error", "content": str(e)}); self.send_event({"type": "done"})
@@ -1427,13 +1429,18 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if streaming: self.send_event({"type": "usage", "usage": u}); self.send_event({"type": "done"})
         return u
 
-    def _gw_exec_and_continue(self, reply, history, api_msgs_builder, streaming, api_key=None, api_base=None, model=None):
+    def _gw_exec_and_continue(self, reply, history, api_msgs_builder, streaming,
+                              confirm=False, api_key=None, api_base=None, model=None):
         cmds = parse_commands(reply)
         if not cmds:
             return None
         if streaming:
             self.send_event({"type": "commands", "commands": [
-                {"type": c["type"], "args": c.get("args", "")} for c in cmds]})
+                {"type": c["type"], "args": c.get("args", "")} for c in cmds],
+                "need_confirm": confirm})
+        # If confirm mode, don't execute — let frontend handle it
+        if confirm:
+            return None
         results = []
         for i, c in enumerate(cmds):
             gw_log_info("CMD", "{} {}".format(c["type"], c.get("args", "")[:40]))
@@ -1454,7 +1461,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         return None
 
 
-    def _gw_default_chat(self, user_msg, streaming):
+    def _gw_default_chat(self, user_msg, streaming, confirm=False):  # ← 加 confirm=False
         gateway_messages.append({"role": "user", "content": user_msg})
         sys_msg = {"role": "system", "content": build_system()}
         api_msgs = [sys_msg] + gateway_messages[-MAX_HISTORY * 2:]
@@ -1466,14 +1473,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
             if streaming: self.send_event({"type": "error", "content": "No response"}); self.send_event({"type": "done"})
             return
         gateway_messages.append({"role": "assistant", "content": reply})
-        self._gw_exec_and_continue(reply, gateway_messages, lambda: [sys_msg] + gateway_messages[-MAX_HISTORY * 2:], streaming)
+        self._gw_exec_and_continue(reply, gateway_messages, lambda: [sys_msg] + gateway_messages[-MAX_HISTORY * 2:], streaming, confirm=confirm)  # ← 加 confirm=confirm
         if streaming: self.send_event({"type": "agent_end", "agent": ""})
         u = self._gw_send_usage(streaming, elapsed)
         gw_log_chat("REPLY", "({:.1f}s, {} tok)".format(elapsed, u.get("total", 0)))
         if not streaming: self.send_json({"reply": reply, "time": round(elapsed, 2), "usage": u})
         if len(gateway_messages) > MAX_HISTORY * 2: gateway_messages[:] = gateway_messages[-MAX_HISTORY * 2:]
 
-    def _gw_agent_chat(self, user_msg, agent_name, streaming):
+    def _gw_agent_chat(self, user_msg, agent_name, streaming, confirm=False):  # ← 加 confirm=False
         agent = agents[agent_name]
         history = agent.setdefault("history", [])
         history.append({"role": "user", "content": user_msg})
@@ -1491,7 +1498,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return
         history.append({"role": "assistant", "content": reply})
         self._gw_exec_and_continue(reply, history, lambda: [sys_msg] + history[-MAX_HISTORY * 2:],
-            streaming, api_key=a_key, api_base=a_base, model=a_model)
+            streaming, confirm=confirm, api_key=a_key, api_base=a_base, model=a_model)  # ← 加 confirm=confirm
         if streaming: self.send_event({"type": "agent_end", "agent": agent_name})
         u = self._gw_send_usage(streaming, elapsed)
         gw_log_chat("@" + agent_name, "({:.1f}s)".format(elapsed))
@@ -1499,7 +1506,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if len(history) > MAX_HISTORY * 2: agent["history"] = history[-MAX_HISTORY * 2:]
         save_agents()
 
-    def _gw_group_chat(self, user_msg, group_name, streaming):
+    def _gw_group_chat(self, user_msg, group_name, streaming, confirm=False):  # ← 加 confirm=False
         group = groups[group_name]
         history = group.setdefault("history", [])
         mentions = extract_mentions(user_msg)
@@ -1539,18 +1546,19 @@ class GatewayHandler(BaseHTTPRequestHandler):
             gw_log_chat("@" + agent_name, "({:.1f}s)".format(elapsed))
             cmds = parse_commands(reply)
             if cmds:
-                if streaming: self.send_event({"type": "commands", "commands": [{"type": c["type"], "args": c.get("args", "")} for c in cmds]})
-                for i, c in enumerate(cmds):
-                    res = execute_command(c)
-                    if streaming: self.send_event({"type": "result", "index": i, "content": res})
-                    history.append({"role": "user", "content": "[{}:{}] -> {}".format(c["type"], c.get("args", ""), res), "agent": "system"})
-                api_msgs2 = group_to_api_msgs(group_name, agent_name)
-                reply2 = stream_api(api_msgs2, lambda tok: self.send_event({"type": "token", "content": tok}) if streaming else None,
-                    api_key=a_key, api_base=a_base, model=a_model)
-                if reply2:
-                    history.append({"role": "assistant", "content": reply2, "agent": agent_name})
-                    for m in extract_mentions(reply2):
-                        if m in members and m not in responded: pending.append(m)
+                if streaming: self.send_event({"type": "commands", "commands": [{"type": c["type"], "args": c.get("args", "")} for c in cmds], "need_confirm": confirm})  # ← 加 need_confirm
+                if not confirm:  # ← confirm 模式下跳过自动执行
+                    for i, c in enumerate(cmds):
+                        res = execute_command(c)
+                        if streaming: self.send_event({"type": "result", "index": i, "content": res})
+                        history.append({"role": "user", "content": "[{}:{}] -> {}".format(c["type"], c.get("args", ""), res), "agent": "system"})
+                    api_msgs2 = group_to_api_msgs(group_name, agent_name)
+                    reply2 = stream_api(api_msgs2, lambda tok: self.send_event({"type": "token", "content": tok}) if streaming else None,
+                        api_key=a_key, api_base=a_base, model=a_model)
+                    if reply2:
+                        history.append({"role": "assistant", "content": reply2, "agent": agent_name})
+                        for m in extract_mentions(reply2):
+                            if m in members and m not in responded: pending.append(m)
             for m in extract_mentions(reply):
                 if m in members and m not in responded:
                     pending.append(m)
@@ -1743,7 +1751,7 @@ def print_status():
 
     print()
     print("  " + sep)
-    print("  {}{}{} Claw v0.8.1".format(C.B, C.CYN, C.R))
+    print("  {}{}{} Claw v0.8.2".format(C.B, C.CYN, C.R))
     print("  " + sep)
     print()
     print("  {}Model:{}    {}".format(C.DIM, C.R, config["model"]))
@@ -1783,7 +1791,7 @@ def cmd_help():
     L = []
     a = L.append
     a("")
-    a("  {}{}\U0001F43E Claw v0.8.1 — Commands{}".format(C.CYN, B, R))
+    a("  {}{}\U0001F43E Claw v0.8.2 — Commands{}".format(C.CYN, B, R))
     a("")
     a("  {}<text>{}                 Chat with current mode".format(B, R))
     a("  {}/key <key>{}             Set API Key".format(B, R))
