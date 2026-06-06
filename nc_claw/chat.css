@@ -457,6 +457,119 @@ html, body {
     border: 1px solid rgba(239, 68, 68, 0.2);
     display: inline-block;
 }
+/* ── System Tool Call ── */
+.msg.system-tool {
+    max-width: 820px;
+    margin: 4px auto;
+    padding: 4px 24px;
+    animation: fadeIn 0.2s ease;
+}
+
+.tool-container {
+    margin-left: 30px;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #111111;
+}
+
+.tool-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: #1a1a1a;
+    border-bottom: 1px solid #2a2a2a;
+    font-size: 12px;
+    font-weight: 500;
+    color: #f59e0b;
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+    transition: background 0.15s;
+}
+
+.tool-header:hover {
+    background: #222222;
+}
+
+.tool-header .tool-icon {
+    font-size: 14px;
+}
+
+.tool-header .tool-count {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: #6b6b6b;
+    margin-left: auto;
+}
+
+.tool-header .tool-toggle {
+    font-size: 10px;
+    color: #6b6b6b;
+    transition: transform 0.2s;
+}
+
+.tool-header.collapsed .tool-toggle {
+    transform: rotate(-90deg);
+}
+
+.tool-body {
+    max-height: 400px;
+    overflow-y: auto;
+    transition: max-height 0.3s ease;
+}
+
+.tool-body.collapsed {
+    max-height: 0;
+    overflow: hidden;
+}
+
+.tool-item {
+    padding: 8px 14px;
+    border-bottom: 1px solid #1a1a1a;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.tool-item:last-child {
+    border-bottom: none;
+}
+
+.tool-cmd {
+    color: #f59e0b;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+.tool-cmd-type {
+    color: #f59e0b;
+    font-weight: 500;
+    flex-shrink: 0;
+}
+
+.tool-cmd-args {
+    color: #e8e6e3;
+    word-break: break-all;
+}
+
+.tool-result {
+    margin-top: 4px;
+    padding: 6px 10px;
+    background: #0a0a0a;
+    border-radius: 4px;
+    color: #4ade80;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.tool-result.has-error {
+    color: #ef4444;
+}
 
 /* ── Debug Badge ── */
 .md-debug {

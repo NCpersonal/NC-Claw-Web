@@ -339,6 +339,11 @@ function streamChat(body) {
     var fullText = '';
     var started = false;
 
+    // Tool call tracking
+    var currentToolBubble = null;
+    var currentToolBody = null;
+    var toolCount = 0;
+
     bodyEl.innerHTML = '<span class="thinking">Thinking...</span>';
 
     fetch(API_BASE + '/api/chat', {
@@ -383,32 +388,50 @@ function streamChat(body) {
                                 bodyEl.innerHTML = '';
                             }
                             fullText += evt.content;
-                            // Real-time markdown render
                             bodyEl.innerHTML = renderMarkdown(fullText);
                             highlightCodeBlocks(bodyEl);
                             scrollToBottom();
                         }
 
+                        // ── Commands: create a new system-tool bubble ──
                         if (evt.type === 'commands') {
                             var cmds = evt.commands || [];
-                            for (var j = 0; j < cmds.length; j++) {
-                                var block = document.createElement('div');
-                                block.className = 'cmd-block';
-                                block.innerHTML =
-                                    '<span class="cmd-type">$ ' + escapeHtml(cmds[j].type) + '</span> ' +
-                                    escapeHtml(cmds[j].args);
-                                bodyEl.appendChild(block);
+                            if (cmds.length > 0) {
+                                currentToolBubble = createToolBubble();
+                                currentToolBody = currentToolBubble.querySelector('.tool-body');
+                                toolCount = 0;
+                                for (var j = 0; j < cmds.length; j++) {
+                                    toolCount++;
+                                    var item = document.createElement('div');
+                                    item.className = 'tool-item';
+                                    item.innerHTML =
+                                        '<div class="tool-cmd">' +
+                                            '<span class="tool-cmd-type">$ ' + escapeHtml(cmds[j].type) + '</span>' +
+                                            '<span class="tool-cmd-args">' + escapeHtml(cmds[j].args) + '</span>' +
+                                        '</div>';
+                                    item.setAttribute('data-index', j);
+                                    currentToolBody.appendChild(item);
+                                }
+                                updateToolCount(currentToolBubble, toolCount);
+                                scrollToBottom();
                             }
                         }
 
+                        // ── Result: append to current tool bubble ──
                         if (evt.type === 'result') {
-                            var lastCmd = bodyEl.querySelector('.cmd-block:last-child');
-                            if (lastCmd) {
-                                var isError = evt.content.indexOf('[Error') === 0 || evt.content.indexOf('[BLOCKED') === 0;
-                                var span = document.createElement('span');
-                                span.className = isError ? 'cmd-error' : 'cmd-result';
-                                span.textContent = '\n' + evt.content;
-                                lastCmd.appendChild(span);
+                            if (currentToolBody) {
+                                var items = currentToolBody.querySelectorAll('.tool-item');
+                                var targetItem = items[evt.index] || items[items.length - 1];
+                                if (targetItem) {
+                                    var isError = evt.content.indexOf('[Error') === 0 ||
+                                                  evt.content.indexOf('[BLOCKED') === 0 ||
+                                                  evt.content.indexOf('[Not found') === 0;
+                                    var resultDiv = document.createElement('div');
+                                    resultDiv.className = 'tool-result' + (isError ? ' has-error' : '');
+                                    resultDiv.textContent = evt.content;
+                                    targetItem.appendChild(resultDiv);
+                                }
+                                scrollToBottom();
                             }
                         }
 
@@ -439,6 +462,49 @@ function streamChat(body) {
         scrollToBottom();
     });
 }
+
+function finishStream(bodyEl, fullText) {
+    if (fullText) {
+        bodyEl.innerHTML = renderMarkdown(fullText);
+        highlightCodeBlocks(bodyEl);
+    }
+    streaming = false;
+    document.getElementById('send-btn').disabled = false;
+    scrollToBottom();
+}
+
+// ── Create a system tool call bubble ──
+function createToolBubble() {
+    var container = document.getElementById('messages');
+    var div = document.createElement('div');
+    div.className = 'msg system-tool';
+    div.innerHTML =
+        '<div class="tool-container">' +
+            '<div class="tool-header" onclick="toggleToolBody(this)">' +
+                '<span class="tool-icon">⚙</span>' +
+                '<span>System Tool Call</span>' +
+                '<span class="tool-count"></span>' +
+                '<span class="tool-toggle">▼</span>' +
+            '</div>' +
+            '<div class="tool-body"></div>' +
+        '</div>';
+    container.appendChild(div);
+    return div;
+}
+
+function updateToolCount(bubble, count) {
+    var el = bubble.querySelector('.tool-count');
+    if (el) {
+        el.textContent = count + (count === 1 ? ' command' : ' commands');
+    }
+}
+
+function toggleToolBody(header) {
+    var body = header.nextElementSibling;
+    body.classList.toggle('collapsed');
+    header.classList.toggle('collapsed');
+}
+
 
 function finishStream(bodyEl, fullText) {
     // Final clean render

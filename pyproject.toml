@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nc-claw"
-version = "0.7.4"
+version = "0.7.7"
 authors = [
   { name = "NCstudio", email = "ncstidio@1024idc.com" }
 ]
