@@ -5,4 +5,3 @@ build/
 __pycache__/
 install-rpiplay/
 *.bak
-release.sh
