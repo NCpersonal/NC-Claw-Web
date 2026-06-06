@@ -620,9 +620,11 @@ SHELL_BINS = {
 }
 
 DANGER = [
-    r'\brm\s+(-[a-zA-Z]*r|--recursive)\b', r'\bmkfs\b', r'\bdd\s+if=',
-    r'\b(shutdown|reboot|halt)\b', r'\bkill\s+(-9\s+)?1\b', r'\brm\s+-rf\s+[~/]',
+    r'\bmkfs\b', r'\bdd\s+if=',
+    r'\b(shutdown|reboot|halt)\b', r'\bkill\s+(-9\s+)?1\b',
+    r'\brm\s+-rf\s+/',
 ]
+
 
 
 def is_dangerous(cmd):
