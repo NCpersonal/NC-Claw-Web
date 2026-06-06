@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-__version__ = "0.6.15"
+__version__ = "0.6.16"
 """
-Claw v0.6.15 — Terminal AI Assistant
+Claw v0.6.16 — Terminal AI Assistant
   Multi-Agent · Group Chat · Per-Agent API · Skills · Web Gateway
 Usage: python claw.py
 Zero dependencies — Python 3.8+ stdlib only.
@@ -234,12 +234,16 @@ def build_system():
         "- NEVER wrap commands in backticks or code fences\n"
         "- NEVER add trailing punctuation to commands\n"
         "- Multi-line: command keyword on one line, content, then //end\n"
+        "- Pipes (|) only work with //exec, NOT with //read\n"
+        "- Always use //exec for shell commands (ls, cat, grep, etc.), NOT //ls, //cat\n"
+        "- //python does NOT support -c flag, write code directly after //python and end with //end\n"
         "\n## Rules\n"
         "- Use commands when helpful, naturally within text\n"
         "- Multiple commands OK; results return automatically, then continue\n"
         "- Ask before destructive ops. Be concise.\n"
         "\nEnvironment: " + si + " | Shell: " + sh + " | CWD: " + os.getcwd() + "\n"
     )
+
     if WORKSPACE_FILE.exists():
         try:
             w = WORKSPACE_FILE.read_text("utf-8", errors="replace")
@@ -559,11 +563,26 @@ def cmd_group(args):
 
 # ━━━ Command Parser & Executor ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+# ━━━ 修复 2: CMD_TYPES 增加常用 shell 别名 + 自动路由 ━━━
+
 CMD_TYPES = [
     "exec", "open", "read", "write", "browse", "download",
     "copy", "move", "delete", "mkdir", "tree", "search",
-    "info", "process", "kill", "env", "time", "ip", "ping", "python", "git",
+    "info", "process", "kill", "env", "time", "ip", "ping",
+    "python", "git",
+    # AI 常生成的 shell 别名，自动路由到 exec
+    "ls", "cat", "head", "tail", "wc", "grep", "find",
+    "df", "free", "uname", "whoami", "id", "pwd",
 ]
+
+# 别名 → exec 映射表
+CMD_ALIAS = {
+    "ls": "exec", "cat": "exec", "head": "exec", "tail": "exec",
+    "wc": "exec", "grep": "exec", "find": "exec", "df": "exec",
+    "free": "exec", "uname": "exec", "whoami": "exec", "id": "exec",
+    "pwd": "exec",
+}
+
 
 DANGER = [
     r'\brm\s+(-[a-zA-Z]*r|--recursive)\b', r'\bmkfs\b', r'\bdd\s+if=',
@@ -576,10 +595,12 @@ def is_dangerous(cmd):
 def _strip_artifacts(text):
     """Remove markdown formatting but preserve // commands."""
     text = text.replace('\r\n', '\n').replace('\r', '\n')
-    # Only remove actual triple backtick fences, NOT // commands
+    # Remove code fences
     text = re.sub(r'```[a-zA-Z]*\s*\n', '\n', text)
     text = re.sub(r'```\s*\n', '\n', text)
     text = text.replace('```', '')
+    # Remove inline backticks (关键修复)
+    text = re.sub(r'`([^`]*)`', r'\1', text)
     # Remove bold but preserve content
     text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
     return text
@@ -710,6 +731,12 @@ def _quote_split(args, n):
 
 def execute_command(cmd):
     t, args = cmd["type"], cmd.get("args", "")
+
+    # 别名路由：ls/cat/... → exec
+    if t in CMD_ALIAS:
+        args = t + (" " + args if args else "")
+        t = CMD_ALIAS[t]
+
     try:
         if t == "exec":
             if is_dangerous(args): return "[BLOCKED: {}]".format(args)
@@ -871,14 +898,25 @@ def execute_command(cmd):
             import io, contextlib, textwrap
             buf = io.StringIO()
             try:
+                code = args
+                cm = re.match(r'^-c\s+["\'](.*)["\']$', args, re.DOTALL)
+                if cm:
+                    code = cm.group(1)
                 with contextlib.redirect_stdout(buf):
-                    exec(textwrap.dedent(args), {"__builtins__": __builtins__, "os": os, "sys": sys, "Path": Path, "json": json, "re": re, "time": time})
+                    exec(textwrap.dedent(code), {
+                        "__builtins__": __builtins__,
+                        "os": os, "sys": sys, "Path": Path,
+                        "json": json, "re": re, "time": time
+                    })
                 return buf.getvalue().strip() or "[No output]"
-            except Exception as e: return "[Error] {}: {}".format(type(e).__name__, e)
+            except Exception as e:
+                return "[Error] {}: {}".format(type(e).__name__, e)
         if t == "git": return _run("git {}".format(args))
         return "[Unknown: {}]".format(t)
     except subprocess.TimeoutExpired: return "[Timeout 30s]"
     except Exception as e: return "[Error: {}: {}]".format(type(e).__name__, e)
+
+
 
 
 # ━━━ Streaming API Client ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1004,7 +1042,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             })
             return
         if path == "/api/health":
-            self.send_json({"status": "ok", "version": "0.6.15", "model": config["model"],
+            self.send_json({"status": "ok", "version": "0.6.16", "model": config["model"],
                 "agents": list(agents.keys()), "groups": list(groups.keys()),
                 "uptime": time.time() - gateway_start_time,
                 "has_sudo": bool(sudo_password),
@@ -1035,7 +1073,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if path == "/api/usage": self.send_json(token_usage); return
         
         if path == "/api":
-            self.send_json({"name": "Claw Gateway", "version": "0.6.15",
+            self.send_json({"name": "Claw Gateway", "version": "0.6.16",
                 "endpoints": {"GET /": "Chat UI", "GET /api/health": "Health", "GET /api/config": "Config",
                     "GET /api/skills": "Skills", "GET /api/agents": "Agents", "GET /api/groups": "Groups",
                     "POST /api/chat": "Chat (stream)", "POST /api/chat/sync": "Chat (sync)",
@@ -1579,7 +1617,7 @@ def print_status():
 
     print()
     print("  " + sep)
-    print("  {}{}{} Claw v0.6.15".format(C.B, C.CYN, C.R))
+    print("  {}{}{} Claw v0.6.16".format(C.B, C.CYN, C.R))
     print("  " + sep)
     print()
     print("  {}Model:{}    {}".format(C.DIM, C.R, config["model"]))
@@ -1619,7 +1657,7 @@ def cmd_help():
     L = []
     a = L.append
     a("")
-    a("  {}{}\U0001F43E Claw v0.6.15 — Commands{}".format(C.CYN, B, R))
+    a("  {}{}\U0001F43E Claw v0.6.16 — Commands{}".format(C.CYN, B, R))
     a("")
     a("  {}<text>{}                 Chat with current mode".format(B, R))
     a("  {}/key <key>{}             Set API Key".format(B, R))
